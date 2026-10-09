@@ -4566,7 +4566,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
 
         // POST /api/v1/tasks/push — platform pushes a task directly (M4) or for verification (M5)
         this.app.post('/api/v1/tasks/push', async (req, res) => {
-            const { task_id, model = 'auto', prompt = '', platform_url, is_verification = false } = req.body || {};
+            const { task_id, model = 'auto', prompt = '', platform_url, is_verification = false, temperature, max_tokens } = req.body || {};
             if (!task_id || !prompt) { res.status(400).json({ error: 'task_id and prompt required' }); return; }
 
             const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
@@ -4587,7 +4587,11 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                     const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ model: resolvedModel, messages, stream: false }),
+                        // Forward sampling params when the platform sends them
+                        // (JSON.stringify drops undefined keys, so absent params
+                        // keep the backend defaults). They were previously
+                        // accepted in the payload but dropped here.
+                        body: JSON.stringify({ model: resolvedModel, messages, stream: false, temperature, max_tokens }),
                         signal: AbortSignal.timeout(90000),
                     });
                     const aiData: any = aiResp.ok ? await aiResp.json() : null;

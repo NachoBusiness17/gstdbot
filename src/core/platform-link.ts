@@ -267,7 +267,7 @@ export class PlatformLink extends EventEmitter {
             const data: any = await resp.json();
             if (!data.task?.task_id) return;
 
-            const { task_id, model = 'llama3.2:3b', prompt = '' } = data.task;
+            const { task_id, model = 'llama3.2:3b', prompt = '', temperature, max_tokens } = data.task;
             const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 
             let messages: any[];
@@ -278,7 +278,11 @@ export class PlatformLink extends EventEmitter {
                 const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model, messages, stream: false }),
+                    // Forward sampling params when the task carries them
+                    // (JSON.stringify drops undefined keys, so absent params
+                    // keep the backend defaults). They were previously
+                    // dropped here, ignoring the submitter's settings.
+                    body: JSON.stringify({ model, messages, stream: false, temperature, max_tokens }),
                     signal: AbortSignal.timeout(90000),
                 });
                 const aiData: any = aiResp.ok ? await aiResp.json() : null;
