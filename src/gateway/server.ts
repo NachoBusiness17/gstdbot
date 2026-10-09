@@ -11,6 +11,7 @@ import express from 'express';
 import http from 'http';
 import { v4 as uuid } from 'uuid';
 import { NeuralRouter, RouteResult } from './router.js';
+import { verifyTaskPushSecret, TASK_PUSH_SECRET_HEADER } from './task-push-auth.js';
 import { SessionManager, Session } from './sessions.js';
 import { cpus, totalmem, freemem, hostname, platform, arch, loadavg, uptime as osUptime, networkInterfaces } from 'os';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
@@ -4565,7 +4566,20 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
         }
 
         // POST /api/v1/tasks/push — platform pushes a task directly (M4) or for verification (M5)
+        // Auth: when GSTD_TASK_PUSH_SECRET is set, the caller must present it
+        // in the X-GSTD-Task-Push-Secret header (constant-time compare). The
+        // endpoint drives inference on this node, so leaving it open lets any
+        // party spend the node's compute. Unset secret keeps today's behavior.
+        if (!process.env.GSTD_TASK_PUSH_SECRET) {
+            logActivity('GSTD_TASK_PUSH_SECRET not set - /api/v1/tasks/push accepts unauthenticated pushes. Set it and have the platform send the X-GSTD-Task-Push-Secret header.', 'warn');
+        }
         this.app.post('/api/v1/tasks/push', async (req, res) => {
+            const pushSecret = process.env.GSTD_TASK_PUSH_SECRET || '';
+            if (!verifyTaskPushSecret((req.headers as any)[TASK_PUSH_SECRET_HEADER], pushSecret)) {
+                logActivity('Task push rejected: missing or wrong secret header', 'warn');
+                res.status(401).json({ error: 'unauthorized' });
+                return;
+            }
             const { task_id, model = 'auto', prompt = '', platform_url, is_verification = false } = req.body || {};
             if (!task_id || !prompt) { res.status(400).json({ error: 'task_id and prompt required' }); return; }
 
