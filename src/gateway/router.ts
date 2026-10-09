@@ -10,6 +10,7 @@
  *  L3  Fallback msg — tell user to retry (network starting up)
  */
 
+import { createHash } from 'crypto';
 import { demandTracker } from '../lib/demand-tracker.js';
 
 export type RouteTier = 'cache' | 'gstd' | 'fallback';
@@ -144,9 +145,14 @@ class ResponseCache {
         this.cache.set(key, { content, model, ts: Date.now() });
     }
 
-    makeKey(messages: ChatMessage[]) {
+    makeKey(messages: ChatMessage[], model: string) {
         const last = messages.filter(m => m.role === 'user').pop();
-        return (last?.content?.trim().toLowerCase().slice(0, 200)) || '';
+        const text = (last?.content?.trim().toLowerCase()) || '';
+        // Key on the FULL message text plus the model. The previous key
+        // (first 200 chars, no model) made distinct prompts that share a
+        // long common prefix collide, and let one model's cached answer be
+        // served for a different model.
+        return createHash('sha256').update(`${model}\u0000${text}`).digest('hex');
     }
 }
 
@@ -169,8 +175,14 @@ export class NeuralRouter {
     private async routeInternal(requestedModel: string, messages: ChatMessage[], telegramId?: number): Promise<RouteResult> {
         const start = Date.now();
 
+        const ollamaModel = toOllamaModel(requestedModel);
+        const ollamaUrl   = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+        const platformUrl = (process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com').replace(/\/$/, '');
+
         // ─── L1: Cache ─────────────────────────────────────────────
-        const cacheKey = this.cache.makeKey(messages);
+        // Keyed on model + full prompt so the cache is only consulted for
+        // the backend call that would actually be made.
+        const cacheKey = this.cache.makeKey(messages, ollamaModel);
         const cached = this.cache.get(cacheKey);
         if (cached) {
             return {
@@ -179,9 +191,6 @@ export class NeuralRouter {
             };
         }
 
-        const ollamaModel = toOllamaModel(requestedModel);
-        const ollamaUrl   = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-        const platformUrl = (process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com').replace(/\/$/, '');
 
         // ─── L2: GSTD Task Queue (submit → node processes → poll result → earnings) ─
         try {
