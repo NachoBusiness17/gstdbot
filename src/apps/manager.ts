@@ -963,6 +963,38 @@ const BUILTIN_APPS: AppManifest[] = [
 // ─── Community App Registry (fetched from platform) ─────────────
 const REGISTRY_URL = 'https://platform.gstdtoken.com/api/v1/apps/registry';
 
+// Remote manifests become shell commands at install time (docker pull /
+// volume create). Every string that reaches execSync must pass a strict
+// charset allowlist, and a manifest that fails validation is rejected
+// wholesale — fail closed. This kills the injection class where a
+// compromised or hostile registry response turns `docker volume create
+// ${volName}` into arbitrary host command execution.
+const SAFE_IMAGE_RE = /^[a-z0-9][a-z0-9._/-]*(:[a-zA-Z0-9_.-]+)?$/;
+const SAFE_NAME_RE  = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+const SAFE_PORT_RE  = /^\d{1,5}(:\d{1,5})?(\/(tcp|udp))?$/;
+const SAFE_ENVVAL_RE = /^[A-Za-z0-9_:/.\-?=&@%+~#]+$/;
+
+interface DockerManifestLike {
+    image: string;
+    ports?: string[];
+    volumes?: string[];
+    environment?: Record<string, string>;
+}
+
+export function isDockerManifestSafe(d: DockerManifestLike): boolean {
+    if (!SAFE_IMAGE_RE.test(d.image)) return false;
+    for (const v of d.volumes || []) {
+        if (!SAFE_NAME_RE.test(v.split(':')[0])) return false;
+    }
+    for (const p of d.ports || []) {
+        if (!SAFE_PORT_RE.test(p)) return false;
+    }
+    for (const [k, val] of Object.entries(d.environment || {})) {
+        if (!SAFE_NAME_RE.test(k) || !SAFE_ENVVAL_RE.test(val)) return false;
+    }
+    return true;
+}
+
 // ─── App Manager ────────────────────────────────────────────────
 export class AppManager extends EventEmitter {
     private appsDir: string;
@@ -1021,8 +1053,14 @@ export class AppManager extends EventEmitter {
             if (resp.ok) {
                 const data: any = await resp.json();
                 const remoteApps: AppManifest[] = data.apps || [];
-                // Merge remote apps on top of built-in (remote overrides if same id)
+                // Merge remote apps on top of built-in (remote overrides if same id).
+                // Remote manifests drive shell commands at install time — anything
+                // that fails the docker-charset allowlist is dropped, not merged.
                 for (const app of remoteApps) {
+                    if (app.docker && !isDockerManifestSafe(app.docker)) {
+                        console.warn(`[apps] registry app "${app.id}" rejected: unsafe docker manifest`);
+                        continue;
+                    }
                     builtinById.set(app.id, app);
                 }
             }
@@ -1220,12 +1258,14 @@ export class AppManager extends EventEmitter {
             // Pull image
             if (!await this.runStep(appId, stepIdx++, () => {
                 const { execSync } = require('child_process');
+                if (!isDockerManifestSafe(manifest.docker!)) throw new Error(`Unsafe docker manifest for app "${manifest.id}"`);
                 execSync(`docker pull ${manifest.docker!.image}`, { encoding: 'utf-8', timeout: 180_000 });
             }, 100)) { installedApp.status = 'error'; this.saveState(); return false; }
 
             // Create volumes
             if (!await this.runStep(appId, stepIdx++, () => {
                 const { execSync } = require('child_process');
+                if (!isDockerManifestSafe(manifest.docker!)) throw new Error(`Unsafe docker manifest for app "${manifest.id}"`);
                 (manifest.docker!.volumes || []).forEach(v => {
                     const volName = v.split(':')[0];
                     try { execSync(`docker volume create ${volName}`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' }); } catch (_) {}
