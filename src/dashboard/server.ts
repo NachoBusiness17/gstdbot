@@ -117,7 +117,7 @@ export function logActivity(msg: string, type: string = 'info'): void {
 const nodeStartedAt = Date.now();
 
 // ─── Main Server ─────────────────────────────────────────────────
-export async function startDashboard(port: number = 8080, host: string = '0.0.0.0'): Promise<void> {
+export async function startDashboard(port: number = 8080, host: string = '127.0.0.1'): Promise<void> {
     const app = express();
     app.use(express.json());
 
@@ -125,8 +125,33 @@ export async function startDashboard(port: number = 8080, host: string = '0.0.0.
     app.use((_req, res, next) => {
         res.header('Access-Control-Allow-Origin', '*');
         res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, x-gstd-token');
         if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }
+        next();
+    });
+
+    // ─── Control-plane auth ─────────────────────────────────────
+    // This API can restart the node and run git pull + rebuild over HTTP.
+    // With GSTD_DASHBOARD_TOKEN set, every /api request must present it
+    // (x-gstd-token header or ?token=) — that is the only safe way to bind
+    // beyond loopback. Without a token, /api is loopback-only, fail-closed;
+    // static UI routes stay open so the local dashboard still renders.
+    const dashboardToken = process.env.GSTD_DASHBOARD_TOKEN || '';
+    app.use((req, res, next) => {
+        if (!req.path.startsWith('/api/')) { next(); return; }
+        if (dashboardToken) {
+            const provided = (req.headers['x-gstd-token'] as string) || String(req.query.token || '');
+            if (provided === dashboardToken) { next(); return; }
+            res.status(401).json({ error: 'unauthorized: missing or invalid x-gstd-token' });
+            return;
+        }
+        const remote = req.socket.remoteAddress || '';
+        const isLocal = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+        if (!isLocal) {
+            logActivity(`Rejected ${req.method} ${req.path} from non-local ${remote} (no GSTD_DASHBOARD_TOKEN set)`, 'warn');
+            res.status(403).json({ error: 'forbidden: dashboard API is loopback-only until GSTD_DASHBOARD_TOKEN is set' });
+            return;
+        }
         next();
     });
 
@@ -376,6 +401,9 @@ export async function startDashboard(port: number = 8080, host: string = '0.0.0.
     app.use('/static', express.static(join(__dirname, '../../web')));
 
     // Start
+    if (!dashboardToken) {
+        logActivity('GSTD_DASHBOARD_TOKEN not set — dashboard API restricted to loopback', 'warn');
+    }
     app.listen(port, host, () => {
         logActivity(`Dashboard started on http://${host}:${port}`);
         console.log(`  📊 Dashboard: http://${host === '0.0.0.0' ? getLocalIP() : host}:${port}`);
