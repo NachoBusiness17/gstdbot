@@ -971,6 +971,10 @@ const REGISTRY_URL = 'https://platform.gstdtoken.com/api/v1/apps/registry';
 // ${volName}` into arbitrary host command execution.
 const SAFE_IMAGE_RE = /^[a-z0-9][a-z0-9._/-]*(:[a-zA-Z0-9_.-]+)?$/;
 const SAFE_NAME_RE  = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+// appId also becomes a docker container name fragment (`gstd-${appId}`) —
+// same charset as SAFE_NAME_RE, capped at 61 chars (63 minus 'gstd-' prefix,
+// docker name limit). F15 (2026-10-14): lifecycle execSync interpolates it.
+const SAFE_APP_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,60}$/;
 const SAFE_PORT_RE  = /^\d{1,5}(:\d{1,5})?(\/(tcp|udp))?$/;
 const SAFE_ENVVAL_RE = /^[A-Za-z0-9_:/.\-?=&@%+~#]+$/;
 
@@ -982,6 +986,7 @@ interface DockerManifestLike {
 }
 
 export function isDockerManifestSafe(d: DockerManifestLike): boolean {
+    if (!d.id || !SAFE_NAME_RE.test(d.id) || !SAFE_APP_ID_RE.test(d.id)) return false;
     if (!SAFE_IMAGE_RE.test(d.image)) return false;
     for (const v of d.volumes || []) {
         if (!SAFE_NAME_RE.test(v.split(':')[0])) return false;
@@ -1344,6 +1349,7 @@ export class AppManager extends EventEmitter {
         if (app.manifest.docker) {
             try {
                 const { execSync } = require('child_process');
+                if (!SAFE_APP_ID_RE.test(appId)) throw new Error('F15: unsafe appId');
                 execSync(`docker rm -f gstd-${appId} 2>/dev/null; docker rmi ${app.manifest.docker.image} 2>/dev/null`, {
                     encoding: 'utf-8',
                     timeout: 30_000,
@@ -1370,9 +1376,11 @@ export class AppManager extends EventEmitter {
                 const volumes = m.volumes.map(v => `-v ${v}`).join(' ');
                 const envs = Object.entries(m.environment || {}).map(([k, v]) => `-e ${k}=${v}`).join(' ');
 
+                if (!SAFE_APP_ID_RE.test(appId)) throw new Error('F15: unsafe appId');
                 execSync(`docker rm -f gstd-${appId} 2>/dev/null || true`, { encoding: 'utf-8' });
                 execSync(
-                    `docker run -d --name gstd-${appId} ${ports} ${volumes} ${envs} --restart unless-stopped ${m.image}`,
+                    if (!SAFE_APP_ID_RE.test(appId)) throw new Error('F15: unsafe appId');
+                `docker run -d --name gstd-${appId} ${ports} ${volumes} ${envs} --restart unless-stopped ${m.image}`,
                     { encoding: 'utf-8', timeout: 30_000 }
                 );
 
@@ -1403,6 +1411,7 @@ export class AppManager extends EventEmitter {
         if (app.manifest.docker) {
             try {
                 const { execSync } = require('child_process');
+                if (!SAFE_APP_ID_RE.test(appId)) throw new Error('F15: unsafe appId');
                 execSync(`docker stop gstd-${appId} 2>/dev/null || true`, { encoding: 'utf-8' });
             } catch (_e) { }
         }
