@@ -8,6 +8,7 @@
 import { Bot, Context, session } from 'grammy';
 import { NeuralRouter, type SmartMixTier, SMARTMIX_TIERS } from '../gateway/router.js';
 import { CommunityGuardian } from './guardian.js';
+import { Announcer, parseReferrer, inviteLink } from './growth.js';
 import crypto from 'crypto';
 
 // ─── Factuality System Prompt (identical to gstdtoken.com) ───
@@ -118,6 +119,7 @@ export class TelegramChannel {
     private config: TelegramConfig;
     private startInProgress = false;
     private retryTimer: NodeJS.Timeout | null = null;
+    private announcer: Announcer | null = null;
 
     /** Authenticated API call to Go backend */
     private async apiCall(path: string, opts?: { method?: string; body?: any }): Promise<any> {
@@ -261,8 +263,8 @@ export class TelegramChannel {
             }
 
             if (payload.startsWith('ref_')) {
-                const referrerId = payload.replace('ref_', '').trim();
-                if (referrerId && referrerId !== String(ctx.from?.id)) {
+                const referrerId = parseReferrer(payload, ctx.from?.id);
+                if (referrerId) {
                     ctx.session.referrerId = referrerId;
                     console.log(`[Bot] Referral from ${referrerId} for user ${ctx.from?.id}`);
                 }
@@ -293,9 +295,7 @@ export class TelegramChannel {
                   `Share your phone's resources — earn GSTD automatically.\n\n` +
                   `<b>You need 0 GSTD to start.</b> Just link your wallet and tap Launch.\n\n` +
                   `💰 <b>Earnings:</b>\n` +
-                  `• 📱 Any phone — earns per inference request served\n` +
-                  `• 🖥 Desktop 8GB+ — higher throughput, more earnings\n` +
-                  `• 🖥 Desktop 32GB+ — run large models, premium rates\n` +
+                  `Paid per completed, funded task — there is no fixed hourly rate. Desktops with more RAM/GPU can serve bigger models.\n` +
                   `<i>Actual earnings scale with network demand.</i>\n\n` +
                   `<b>What your node does:</b>\n` +
                   `⚙️ Serves AI inference requests from the network\n` +
@@ -313,6 +313,21 @@ export class TelegramChannel {
                     ],
                 },
             });
+        });
+
+        // Inline mode: lets any user drop a join card with their referral link into any chat.
+        this.bot.on('inline_query', async (ctx) => {
+            const username = this.bot.botInfo?.username || 'gstdaibot';
+            const link = inviteLink(username, ctx.from.id);
+            await ctx.answerInlineQuery([{
+                type: 'article',
+                id: 'gstd-join',
+                title: 'Invite to GSTD',
+                description: 'Free AI chat — and run a node to earn GSTD for completed tasks',
+                input_message_content: {
+                    message_text: `🐝 GSTD — decentralized AI network. Free AI chat in Telegram; run a node to earn GSTD for completed tasks.\n${link}`,
+                },
+            }], { cache_time: 300, is_personal: true }).catch(() => {});
         });
 
         // ── /new ──
@@ -1253,9 +1268,9 @@ QUALITY BAR: Your answer must be the BEST the user has ever received from any AI
     }
 
     private async handleReferral(ctx: any, lang: string) {
-        const botUsername = this.bot.botInfo?.username || 'gstdtoken_bot';
+        const botUsername = this.bot.botInfo?.username || 'gstdaibot';
         const userId = ctx.from?.id;
-        const inviteLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+        const link = inviteLink(botUsername, userId);
 
         let refStats = '';
         try {
@@ -1270,16 +1285,17 @@ QUALITY BAR: Your answer must be the BEST the user has ever received from any AI
 
         const msg = `👥 <b>Referral Program</b>${refStats}\n\n` +
               `Invite friends and earn GSTD:\n\n` +
-              `🎁 <b>5%</b> of all referral purchases\n` +
-              `🎁 <b>2%</b> bonus for invitee\n` +
-              `🎁 <b>+1 GSTD</b> for first wallet link\n\n` +
-              `📋 <b>Your Link:</b>\n<code>${inviteLink}</code>`;
+              `🎁 <b>+1 GSTD</b> for you when a friend links a new wallet (up to 20 friends)\n` +
+              `🎁 <b>+0.2 GSTD</b> extra for your friend\n` +
+              `<i>One bonus per wallet; the daily bonus budget is limited.</i>\n\n` +
+              `📋 <b>Your Link:</b>\n<code>${link}</code>`;
 
         await ctx.reply(msg, {
             parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '📤 Share Link', url: `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent('Join GSTD — collective AI & earn!')}` }],
+                    [{ text: '📤 Share Link', url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join GSTD — collective AI & earn!')}` }],
+                    [{ text: '📨 Share in any chat', switch_inline_query: 'join' }],
                     [{ text: '📱 Open App', url: 'https://gstdtoken.com' }],
                 ]
             }
@@ -1417,15 +1433,12 @@ QUALITY BAR: Your answer must be the BEST the user has ever received from any AI
         const earlyBirdNote = `\n\n🌐 <b>Network is growing</b>\n` +
             `The network currently has <b>${totalNodes > 0 ? totalNodes : 'several'} active node${totalNodes !== 1 ? 's' : ''}</b> — more nodes means more inference demand and more earnings.`;
 
-        const earningRates = `\n\n💰 <b>Estimated earning rates:</b>\n` +
-            `📱 Mobile (any phone)  — <b>0.5–2 GSTD/h</b>\n` +
-            `🖥 Desktop 8GB RAM     — <b>1.5 GSTD/h</b>\n` +
-            `🖥 Desktop 32GB RAM    — <b>5.0 GSTD/h</b>\n` +
-            `<i>Actual earnings depend on network demand.</i>`;
+        const earningRates = `\n\n💰 <b>How you earn:</b>\n` +
+            `Nodes are paid per completed task that someone funded. There is no fixed hourly rate; income depends on real demand.`;
 
         const installCmd = `\n\n🖥 <b>Desktop install (1 command):</b>\n` +
-            `<code>docker run -d -p 8080:8080 -e GSTD_WALLET_ADDRESS=YOUR_WALLET ghcr.io/gstdcoin/gstd-node:latest</code>\n` +
-            `<i>Or: <code>curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash</code></i>`;
+            `<code>curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash</code>\n` +
+            `<i>Sources: https://github.com/gstdcoin/gstdbot</i>`;
 
         const unlocks = `\n\n🔓 <b>What GSTD unlocks:</b>\n` +
             `🌱 0 GSTD → Free AI (always)\n` +
@@ -1567,6 +1580,20 @@ QUALITY BAR: Your answer must be the BEST the user has ever received from any AI
                 // Start buy alerts if community chat is configured
                 if (this.config.communityChat) {
                     this.guardian.startBuyAlerts(this.bot, this.config.communityChat);
+
+                    // Daily real-stats post to the configured community chat (skipped when nothing changed).
+                    const chatId = this.config.communityChat;
+                    this.announcer?.stop();
+                    this.announcer = new Announcer(
+                        async () => {
+                            const r = await fetch(`${this.config.swarmUrl}/api/v1/stats/public`, { signal: AbortSignal.timeout(15000) });
+                            if (!r.ok) throw new Error(`stats ${r.status}`);
+                            return r.json() as Promise<any>;
+                        },
+                        async (text) => { await this.bot.api.sendMessage(chatId, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }); },
+                        () => this.bot.botInfo?.username || 'gstdaibot',
+                    );
+                    this.announcer.start();
                 }
             },
         }).catch((err: any) => {
@@ -1588,6 +1615,7 @@ QUALITY BAR: Your answer must be the BEST the user has ever received from any AI
     }
 
     async stop(): Promise<void> {
+        this.announcer?.stop();
         if (this.retryTimer) {
             clearTimeout(this.retryTimer);
             this.retryTimer = null;
