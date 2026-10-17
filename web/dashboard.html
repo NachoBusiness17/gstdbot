@@ -295,6 +295,10 @@
     <div style="font-size:40px;margin-bottom:12px">🔐</div>
     <h2>GSTD Node</h2>
     <p id="auth-sub">Enter your PIN to access the dashboard</p>
+    <div id="setup-token-wrap" style="display:none;margin:12px 0">
+      <label for="setup-token" style="display:block;margin-bottom:6px">One-time setup token</label>
+      <input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="GSTD_DASHBOARD_SETUP_TOKEN" style="width:100%;padding:10px;border-radius:8px">
+    </div>
     <div class="pin-dots">
       <div class="pin-dot" id="d0"></div>
       <div class="pin-dot" id="d1"></div>
@@ -1077,19 +1081,21 @@ async function checkAuth(){
   try {
     const r=await fetch(API+'/api/auth/check',{headers:{'Authorization':'Bearer '+tok}});
     const d=await r.json();
-    if(d.needs_setup){pinMode='setup';set('auth-sub','Create a 4-digit PIN to secure your dashboard');document.getElementById('auth-overlay').classList.remove('hidden');return;}
+    if(d.needs_setup){pinMode='setup';set('auth-sub','Enter the one-time setup token and create a 4-digit PIN');document.getElementById('setup-token-wrap').style.display='block';document.getElementById('auth-overlay').classList.remove('hidden');return;}
     if(d.authenticated){document.getElementById('auth-overlay').classList.add('hidden');onAuth();return;}
-    pinMode='login';set('auth-sub','Enter your PIN to access the dashboard');document.getElementById('auth-overlay').classList.remove('hidden');
-  } catch(e){pinMode='login';document.getElementById('auth-overlay').classList.remove('hidden');}
+    pinMode='login';document.getElementById('setup-token-wrap').style.display='none';set('auth-sub','Enter your PIN to access the dashboard');document.getElementById('auth-overlay').classList.remove('hidden');
+  } catch(e){pinMode='login';document.getElementById('setup-token-wrap').style.display='none';document.getElementById('auth-overlay').classList.remove('hidden');}
 }
 
 async function submitPin(pin){
   set('auth-err','');
   const ep=pinMode==='setup'?'/api/auth/setup':'/api/auth/login';
   try {
-    const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+    const body={pin};
+    if(pinMode==='setup') body.setupToken=document.getElementById('setup-token').value;
+    const r=await fetch(API+ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
-    if(d.token){tok=d.token;localStorage.setItem('gstd_tok',tok);document.getElementById('auth-overlay').classList.add('hidden');onAuth();}
+    if(d.token){tok=d.token;localStorage.setItem('gstd_tok',tok);document.getElementById('setup-token').value='';document.getElementById('auth-overlay').classList.add('hidden');onAuth();}
     else{set('auth-err',d.error||'Incorrect PIN');pinBuf='';updDots();}
   } catch(e){set('auth-err','Connection error');pinBuf='';updDots();}
 }

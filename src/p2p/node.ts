@@ -124,16 +124,17 @@ const TaskResponseSchema = z.object({
 });
 
 // One node's signed commitment to a task result — exchanged directly between
-// co-executors, not through a central coordinator. `resultHash`/`signature`
-// use the exact same encoding SettlementMaster.tact's verifyQuorum() expects
-// (see src/p2p/attestation.ts) so a collected set of these can be submitted
-// on-chain without any reformatting.
+// co-executors, not through a central coordinator. Result and payout fields
+// are signed with the exact encoding SettlementMaster.tact's verifyQuorum()
+// expects (see src/p2p/attestation.ts).
 const AttestationSchema = z.object({
     type: z.literal('attestation'),
     taskId: z.string().uuid(),
     nodeId: z.string().min(1).max(128),
     workerAddr: z.string().min(1).max(128), // TON address (friendly form) this attestor would be paid at
     resultHash: z.string().regex(/^[0-9a-fA-F]{1,64}$/), // hex-encoded uint256
+    gstdBonusAmount: z.string().regex(/^\d{1,36}$/), // nanocoins, signed by the quorum
+    computeUnits: z.number().int().min(0).max(1_000_000_000), // signed by the quorum
     pubkeyHex: z.string().length(64),
     signatureHex: z.string().length(128),
 });

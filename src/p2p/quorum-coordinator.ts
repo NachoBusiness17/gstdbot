@@ -7,14 +7,14 @@
  * cryptographically meaningful, not just "messages arrived"):
  *
  *  1. Every node signs a "reveal": msgHash(taskId, its OWN workerAddr,
- *     its OWN resultHash), and broadcasts it to co-executors. This is only
+ *     its OWN resultHash, bonus, computeUnits), and broadcasts it to co-executors. This is only
  *     valid as proof for THAT node's own payout — a signature that embeds
  *     address A can never verify as proof for address B, by construction
  *     (see attestation.ts). So a peer's self-signed reveal is NOT by itself
  *     usable toward MY quorum.
  *  2. When a node receives a peer's reveal and finds the peer's resultHash
- *     matches its OWN independently-computed result, it signs a fresh
- *     ENDORSEMENT — msgHash(taskId, the PEER's workerAddr, resultHash),
+ *     and payout fields match its own expected values, it signs a fresh
+ *     ENDORSEMENT — msgHash(taskId, the PEER's workerAddr, resultHash, bonus, computeUnits),
  *     signed with ITS OWN key — and broadcasts that too. This is the
  *     cross-signature that actually counts toward the peer's quorum.
  *  3. Each node tallies only attestations/endorsements whose `workerAddr`
@@ -45,6 +45,8 @@ export interface QuorumTaskContext {
     identity: AttestorIdentity; // used to sign endorsements for peers on the fly
     workerAddr: string; // this node's own TON address — who gets paid if quorum is reached
     ownResultHash: string; // hex
+    gstdBonusAmount: bigint; // nanocoins included in the signed settlement
+    computeUnits: bigint; // included in the signed settlement
     ownAttestation: P2PAttestation; // this node's own self-signed reveal (workerAddr = own address)
     coExecutorPeerIds: string[]; // peer IDs of the other nodes assigned this task
     quorumThreshold: number;
@@ -75,7 +77,11 @@ export function awaitQuorum(p2p: GstdP2PNode, ctx: QuorumTaskContext): Promise<Q
 
         const evaluate = () => {
             const candidates = Array.from(collected.values()).filter(
-                (a) => a.taskId === ctx.taskId && a.resultHash === ctx.ownResultHash && a.workerAddr === ctx.workerAddr,
+                (a) => a.taskId === ctx.taskId
+                    && a.resultHash === ctx.ownResultHash
+                    && a.workerAddr === ctx.workerAddr
+                    && a.gstdBonusAmount === ctx.gstdBonusAmount.toString()
+                    && BigInt(a.computeUnits) === ctx.computeUnits,
             );
             // Re-verify every collected signature locally before counting it —
             // a co-executor could forward a garbage/forged attestation.
@@ -83,7 +89,14 @@ export function awaitQuorum(p2p: GstdP2PNode, ctx: QuorumTaskContext): Promise<Q
             // fail-fast local mirror so a bad signature doesn't silently
             // count toward quorum.
             const verified = candidates.filter((a) =>
-                verifyAttestationLocally({ pubkeyHex: a.pubkeyHex, signatureHex: a.signatureHex }, taskIdU64, workerAddr, resultHashBig),
+                verifyAttestationLocally(
+                    { pubkeyHex: a.pubkeyHex, signatureHex: a.signatureHex },
+                    taskIdU64,
+                    workerAddr,
+                    resultHashBig,
+                    ctx.gstdBonusAmount,
+                    ctx.computeUnits,
+                ),
             );
 
             if (process.env.GSTD_P2P_DEBUG) {
@@ -116,19 +129,30 @@ export function awaitQuorum(p2p: GstdP2PNode, ctx: QuorumTaskContext): Promise<Q
             // reach quorum, and is the step that actually makes the quorum
             // mean something (I'm vouching with my own key, not repeating
             // theirs).
-            if (att.resultHash !== ctx.ownResultHash) return; // I disagree with this peer's result — no endorsement
+            if (att.resultHash !== ctx.ownResultHash
+                || att.gstdBonusAmount !== ctx.gstdBonusAmount.toString()
+                || BigInt(att.computeUnits) !== ctx.computeUnits) return;
             const dedupeKey = `${att.workerAddr}:${att.resultHash}`;
             if (alreadyEndorsed.has(dedupeKey)) return;
             alreadyEndorsed.add(dedupeKey);
 
             try {
                 const peerAddr = Address.parse(att.workerAddr);
-                const endorsement = signAttestation(ctx.identity, taskIdU64, peerAddr, resultHashBig);
+                const endorsement = signAttestation(
+                    ctx.identity,
+                    taskIdU64,
+                    peerAddr,
+                    resultHashBig,
+                    ctx.gstdBonusAmount,
+                    ctx.computeUnits,
+                );
                 const endorsementMsg: Omit<P2PAttestation, 'type'> = {
                     taskId: ctx.taskId,
                     nodeId: ctx.ownAttestation.nodeId,
                     workerAddr: att.workerAddr, // addressed to the PEER being endorsed
                     resultHash: ctx.ownResultHash,
+                    gstdBonusAmount: ctx.gstdBonusAmount.toString(),
+                    computeUnits: Number(ctx.computeUnits),
                     pubkeyHex: endorsement.pubkeyHex, // but signed by ME
                     signatureHex: endorsement.signatureHex,
                 };

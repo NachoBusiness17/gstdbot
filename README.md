@@ -117,22 +117,29 @@ git clone https://github.com/gstdcoin/gstdbot
 cd gstdbot
 npm install --legacy-peer-deps
 cp .env.example .env
-nano .env   # set your node ID and optional Telegram token
+nano .env   # set your node ID and GSTD_DASHBOARD_SETUP_TOKEN
 npm start
 ```
 
 ### Docker
 
+For a fresh node, set a one-time dashboard setup token before starting it. Generate
+one with `openssl rand -hex 32`, keep it private, and enter it in the dashboard's
+first-setup prompt. Remove the token from the container environment after setup.
+
 ```bash
 docker run -d \
   -e GSTD_API_URL=https://app.gstdtoken.com/api/v1 \
   -e GSTD_WALLET_ADDRESS=YOUR_TON_WALLET \
+  -e GSTD_DASHBOARD_SETUP_TOKEN=YOUR_RANDOM_64_CHARACTER_HEX_TOKEN \
   -p 8080:8080 \
   --name gstd-node \
   ghcr.io/gstdcoin/gstd-node:latest
 ```
 
 Open `http://localhost:8080` to see your dashboard.
+Initial PIN setup is disabled until `GSTD_DASHBOARD_SETUP_TOKEN` is configured.
+Existing PIN-based logins do not require this token.
 
 ---
 

@@ -704,7 +704,9 @@ export class SwarmAgent {
         const resultHashHex = resultHashBig.toString(16).padStart(64, '0');
         const taskIdU64 = taskIdToUint64(taskId);
         const workerAddrParsed = Address.parse(workerAddr);
-        const ownSig = signAttestation(identity, taskIdU64, workerAddrParsed, resultHashBig);
+        const gstdBonusAmount = 0n;
+        const computeUnits = 1n;
+        const ownSig = signAttestation(identity, taskIdU64, workerAddrParsed, resultHashBig, gstdBonusAmount, computeUnits);
 
         // Dispatch to co-executors so they independently compute the same
         // task and can cross-sign (fire-and-forget — awaitQuorum below
@@ -727,12 +729,16 @@ export class SwarmAgent {
             identity,
             workerAddr,
             ownResultHash: resultHashHex,
+            gstdBonusAmount,
+            computeUnits,
             ownAttestation: {
                 type: 'attestation',
                 taskId,
                 nodeId: this.config.nodeId,
                 workerAddr,
                 resultHash: resultHashHex,
+                gstdBonusAmount: gstdBonusAmount.toString(),
+                computeUnits: Number(computeUnits),
                 pubkeyHex: ownSig.pubkeyHex,
                 signatureHex: ownSig.signatureHex,
             },
@@ -757,7 +763,8 @@ export class SwarmAgent {
             workerAddr,
             resultHash: resultHashHex,
             attestations: quorumResult.attestations,
-            computeUnits: 1,
+            gstdBonusAmount: gstdBonusAmount.toString(),
+            computeUnits: Number(computeUnits),
         };
         this.stats.quorumProofsSubmitted++;
         this.stats.quorumAttestationsTotal += quorumResult.attestations.length;
@@ -894,7 +901,9 @@ export class SwarmAgent {
             const resultHashHex = resultHashBig.toString(16).padStart(64, '0');
             const taskIdU64 = taskIdToUint64(task.id);
             const workerAddrParsed = Address.parse(workerAddr);
-            const ownSig = signAttestation(identity, taskIdU64, workerAddrParsed, resultHashBig);
+            const gstdBonusAmount = 0n;
+            const computeUnits = 1n;
+            const ownSig = signAttestation(identity, taskIdU64, workerAddrParsed, resultHashBig, gstdBonusAmount, computeUnits);
 
             const otherCoExecutors = coExecutors.filter((id) => id !== this.config.nodeId);
 
@@ -908,12 +917,16 @@ export class SwarmAgent {
                 identity,
                 workerAddr,
                 ownResultHash: resultHashHex,
+                gstdBonusAmount,
+                computeUnits,
                 ownAttestation: {
                     type: 'attestation',
                     taskId: task.id,
                     nodeId: this.config.nodeId,
                     workerAddr,
                     resultHash: resultHashHex,
+                    gstdBonusAmount: gstdBonusAmount.toString(),
+                    computeUnits: Number(computeUnits),
                     pubkeyHex: ownSig.pubkeyHex,
                     signatureHex: ownSig.signatureHex,
                 },

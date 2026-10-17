@@ -15,7 +15,7 @@ import { SessionManager, Session } from './sessions.js';
 import { cpus, totalmem, freemem, hostname, platform, arch, loadavg, uptime as osUptime, networkInterfaces } from 'os';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { AppManager } from '../apps/manager.js';
 import { NodeWallet } from '../wallet/manager.js';
 import { execSync } from 'child_process';
@@ -1178,6 +1178,7 @@ export class OmegaGateway {
         const configDir = join(require('os').homedir(), '.config', 'gstdbot');
         const pinFile = join(configDir, 'dashboard_pin.hash'); // .hash not .txt
         const oldPinFile = join(configDir, 'dashboard_pin.txt');
+        const setupToken = process.env.GSTD_DASHBOARD_SETUP_TOKEN || '';
         let pinHash: string = '';
         let pinConfigured = false;
 
@@ -1209,17 +1210,35 @@ export class OmegaGateway {
                 res.status(400).json({ success: false, error: 'PIN already configured' });
                 return;
             }
+            if (Buffer.byteLength(setupToken, 'utf8') < 32) {
+                res.status(503).json({ success: false, error: 'Initial setup is disabled. Configure GSTD_DASHBOARD_SETUP_TOKEN with at least 32 characters and restart the node.' });
+                return;
+            }
+            const suppliedToken = typeof req.body?.setupToken === 'string' ? Buffer.from(req.body.setupToken, 'utf8') : Buffer.alloc(0);
+            const expectedToken = Buffer.from(setupToken, 'utf8');
+            if (suppliedToken.length !== expectedToken.length || !timingSafeEqual(suppliedToken, expectedToken)) {
+                res.status(403).json({ success: false, error: 'Invalid setup token' });
+                return;
+            }
             const { pin } = req.body || {};
-            if (!pin || pin.length < 4 || pin.length > 8) {
+            if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
                 res.status(400).json({ success: false, error: 'PIN must be 4-8 digits' });
+                return;
+            }
+            try {
+                writeFileSync(pinFile, hashPin(pin), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+            } catch (err: any) {
+                if (err?.code === 'EEXIST') {
+                    res.status(409).json({ success: false, error: 'PIN setup already completed; restart the node to reload authentication state.' });
+                    return;
+                }
+                logActivity(`Dashboard PIN setup failed: ${err?.message || 'unable to persist PIN'}`, 'error');
+                res.status(500).json({ success: false, error: 'Unable to save dashboard PIN' });
                 return;
             }
             pinHash = hashPin(pin);
             pinConfigured = true;
-            try {
-                writeFileSync(pinFile, pinHash);
-                logActivity('Dashboard PIN created (hashed)', 'success');
-            } catch (_e) {}
+            logActivity('Dashboard PIN created (hashed)', 'success');
             const token = createAuthToken();
             res.json({ success: true, token });
         });

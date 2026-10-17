@@ -124,14 +124,25 @@ async function main() {
         const resultHash = hashResult(results[i]).toString(16).padStart(64, '0');
         const workerAddr = addresses[i]; // each node settles for ITSELF
         const taskIdU64 = taskIdToUint64(taskId);
+        const gstdBonusAmount = 0n;
+        const computeUnits = 1n;
 
-        const att = signAttestation(identity, taskIdU64, require('@ton/core').Address.parse(workerAddr), BigInt('0x' + resultHash));
+        const att = signAttestation(
+            identity,
+            taskIdU64,
+            require('@ton/core').Address.parse(workerAddr),
+            BigInt('0x' + resultHash),
+            gstdBonusAmount,
+            computeUnits,
+        );
         const ownAttestation = {
             type: 'attestation' as const,
             taskId,
             nodeId: `test-node-${i}`,
             workerAddr,
             resultHash,
+            gstdBonusAmount: gstdBonusAmount.toString(),
+            computeUnits: Number(computeUnits),
             pubkeyHex: att.pubkeyHex,
             signatureHex: att.signatureHex,
         };
@@ -143,6 +154,8 @@ async function main() {
             identity,
             workerAddr,
             ownResultHash: resultHash,
+            gstdBonusAmount,
+            computeUnits,
             ownAttestation,
             coExecutorPeerIds: coExecutors,
             quorumThreshold: 2,
@@ -199,6 +212,8 @@ async function main() {
                     taskId,
                     workerAddr: addresses[0],
                     resultHash: node0.resultHash,
+                    gstdBonusAmount: '0',
+                    computeUnits: 1,
                     attestations: node0.attestations, // [{pubkeyHex, signatureHex}, ...]
                 },
                 null,

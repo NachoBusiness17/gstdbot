@@ -6,6 +6,8 @@
  *       .storeUint(taskId, 64)
  *       .storeAddress(workerAddr)
  *       .storeUint(resultHash, 256)
+ *       .storeCoins(gstdBonusAmount)
+ *       .storeUint(computeUnits, 64)
  *       .endCell()
  *       .hash()
  *
@@ -40,11 +42,19 @@ export function taskIdToUint64(taskUuid: string): bigint {
     return BigInt('0x' + digest.subarray(0, 8).toString('hex'));
 }
 
-export function computeMsgHash(taskId: bigint, workerAddr: Address, resultHash: bigint): Buffer {
+export function computeMsgHash(
+    taskId: bigint,
+    workerAddr: Address,
+    resultHash: bigint,
+    gstdBonusAmount: bigint,
+    computeUnits: bigint,
+): Buffer {
     return beginCell()
         .storeUint(taskId, 64)
         .storeAddress(workerAddr)
         .storeUint(resultHash, 256)
+        .storeCoins(gstdBonusAmount)
+        .storeUint(computeUnits, 64)
         .endCell()
         .hash();
 }
@@ -60,8 +70,10 @@ export function signAttestation(
     taskId: bigint,
     workerAddr: Address,
     resultHash: bigint,
+    gstdBonusAmount: bigint,
+    computeUnits: bigint,
 ): Attestation {
-    const hash = computeMsgHash(taskId, workerAddr, resultHash);
+    const hash = computeMsgHash(taskId, workerAddr, resultHash, gstdBonusAmount, computeUnits);
     const signature = ed25519Sign(hash, identity.keyPair.secretKey);
     return { pubkeyHex: identity.pubkeyHex, signatureHex: signature.toString('hex') };
 }
@@ -72,8 +84,10 @@ export function verifyAttestationLocally(
     taskId: bigint,
     workerAddr: Address,
     resultHash: bigint,
+    gstdBonusAmount: bigint,
+    computeUnits: bigint,
 ): boolean {
-    const hash = computeMsgHash(taskId, workerAddr, resultHash);
+    const hash = computeMsgHash(taskId, workerAddr, resultHash, gstdBonusAmount, computeUnits);
     return signVerify(hash, Buffer.from(att.signatureHex, 'hex'), Buffer.from(att.pubkeyHex, 'hex'));
 }
 
