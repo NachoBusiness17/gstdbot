@@ -15,6 +15,7 @@ import { EventEmitter } from 'events';
 import { readFileSync } from 'fs';
 import { verifyPlatformCommand, isStaleCommand, type PlatformCommand } from '../lib/platform-auth.js';
 import { isRegistered } from '../lib/model-registry.js';
+import { loadOrCreateAttestorIdentity, signPeerRequest, type AttestorIdentity } from '../p2p/identity.js';
 
 export interface NodeCapabilities {
     models: string[];
@@ -66,6 +67,7 @@ export class PlatformLink extends EventEmitter {
     private p2pPeerId: string = '';
     private p2pMultiaddrs: string[] = [];
     private nodePubkey: string = '';
+    private identity: AttestorIdentity | null = null;
     private lastTaskErrorLog = 0;
 
     constructor(config: { platformUrl: string; nodeId: string; walletAddress: string; version: string }) {
@@ -86,6 +88,15 @@ export class PlatformLink extends EventEmitter {
     setCapabilitiesProvider(fn: () => NodeCapabilities) { this.capabilitiesProvider = fn; }
     setWalletAddress(address: string) { this.walletAddress = address; }
     setNodePubkey(pubkeyHex: string) { this.nodePubkey = pubkeyHex; }
+    setIdentity(identity: AttestorIdentity) { this.identity = identity; this.nodePubkey = identity.pubkeyHex; }
+
+    /** Fresh Ed25519 signature headers proving this request comes from the key bound to node_id. */
+    private authHeaders(): Record<string, string> {
+        if (!this.identity && process.env.NODE_ENV !== 'test') {
+            try { this.setIdentity(loadOrCreateAttestorIdentity()); } catch { /* unsigned fallback */ }
+        }
+        return this.identity ? signPeerRequest(this.identity, this.nodeId) : {};
+    }
 
     async start(intervalMs = 120_000) {
         // Delay registration briefly so wallet.init() completes first
@@ -117,6 +128,7 @@ export class PlatformLink extends EventEmitter {
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Wallet-Address': this.walletAddress,
+                    ...this.authHeaders(),
                 },
                 body: JSON.stringify({
                     node_id:      this.nodeId,
@@ -190,6 +202,7 @@ export class PlatformLink extends EventEmitter {
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Wallet-Address': this.walletAddress,
+                    ...this.authHeaders(),
                     'X-Node-Id': this.nodeId,
                 },
                 body: JSON.stringify({
@@ -314,6 +327,7 @@ export class PlatformLink extends EventEmitter {
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Wallet-Address': this.walletAddress,
+                        ...this.authHeaders(),
                     },
                     body: JSON.stringify({
                         node_id: this.nodeId,
@@ -366,6 +380,7 @@ export class PlatformLink extends EventEmitter {
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Wallet-Address': this.walletAddress,
+                    ...this.authHeaders(),
                 },
                 body: JSON.stringify({ task_id, node_id: this.nodeId, result: content }),
                 signal: AbortSignal.timeout(25000),
