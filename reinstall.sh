@@ -52,7 +52,7 @@ restore_previous_version() {
 }
 
 RESET=false
-[ "$1" = "--reset" ] && RESET=true
+[ "${1:-}" = "--reset" ] && RESET=true
 
 echo ""
 echo "  🐝 ═══════════════════════════════════════════"
