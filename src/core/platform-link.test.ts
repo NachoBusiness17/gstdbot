@@ -82,7 +82,45 @@ describe('PlatformLink._processCommands gate', () => {
     });
 });
 
+describe('PlatformLink registration retries', () => {
+    it('retries transient registration failures before the heartbeat interval', async () => {
+        vi.useFakeTimers();
+        const pl = makePL();
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response('temporary failure', { status: 503 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await (pl as any).register();
+        expect((pl as any).registered).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect((pl as any).registered).toBe(true);
+        await pl.stop();
+    });
+});
+
 describe('PlatformLink task delivery', () => {
+    it('waits for an in-flight task poll before stopping', async () => {
+        const pl = makePL();
+        (pl as any).registered = true;
+        let resolvePoll!: (response: Response) => void;
+        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { resolvePoll = resolve; })));
+
+        const poll = (pl as any).runTaskPoll();
+        await Promise.resolve();
+        let stopped = false;
+        const stop = pl.stop().then(() => { stopped = true; });
+        await Promise.resolve();
+        expect(stopped).toBe(false);
+
+        resolvePoll(new Response(JSON.stringify({ task: null }), { status: 200 }));
+        await Promise.all([poll, stop]);
+        expect(stopped).toBe(true);
+    });
+
     it('uses the authenticated POST poll contract and submits successful results', async () => {
         const pl = makePL();
         (pl as any).registered = true;

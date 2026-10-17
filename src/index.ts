@@ -132,7 +132,7 @@ export interface NodeConfig {
 async function loadConfig(): Promise<NodeConfig> {
     const configPath = join(homedir(), '.config', 'gstdbot', 'config.json');
     const defaults: NodeConfig = {
-        version: '3.4.0',
+        version: '3.5.0',
         mode: (process.env.GSTD_MODE as any) || 'cloud',
         nodeId: process.env.GSTD_NODE_ID || `node-${hostname()}`,
         nodeName: process.env.NODE_NAME || `${hostname()}-node`,
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
         // ── 7. Resource Sharing ─────────────────────────────────────
         if (process.env.GSTD_SHARING_ENABLED === 'true') {
             console.log(`  [7/${TOTAL_STEPS}] Enabling resource sharing...`);
-            resources = new ResourceSharing(config);
+            resources = new ResourceSharing(config, wallet.getAddress() || '');
             await resources.init();
         } else {
             console.log(`  [7/${TOTAL_STEPS}] Resource sharing: disabled (set GSTD_SHARING_ENABLED=true)`);
@@ -647,7 +647,9 @@ async function main(): Promise<void> {
     //   2. Build/compile check before restart
     //   3. If build fails → automatic rollback
     //   4. If new version crashes → systemd/PM2 will restart from rolled-back code
+    let shuttingDown = false;
     const checkAndUpdate = async () => {
+        if (shuttingDown) return;
         try {
             const installDir = config.installDir || join(homedir(), 'gstdbot');
             const update = fastForwardNodeUpdate(installDir, 'main');
@@ -719,40 +721,58 @@ async function main(): Promise<void> {
     };
 
     // Check for updates after 2 min, then every hour
-    setTimeout(checkAndUpdate, 2 * 60 * 1000);
+    const updateStartTimer = setTimeout(checkAndUpdate, 2 * 60 * 1000);
     const updateInterval = setInterval(checkAndUpdate, 60 * 60 * 1000);
 
     // ── Graceful shutdown ───────────────────────────────────────
-    const shutdown = async () => {
-        console.log(`\n  🛑 Shutting down GSTD ${isPlatform ? 'Platform' : 'SuperNode'}...`);
-        logActivity('Shutdown initiated', 'warn');
-        clearInterval(updateInterval);
-        if (uptimeDaemon) uptimeDaemon.stop();
-        if (p2pNode) await p2pNode.stop();
-        if (fastifyGateway) await fastifyGateway.close();
-        if (mobileNode) await mobileNode.stop();
-        await tonConnect.close();
-        if (naas) await naas.stop();
-        if (trafficRelay) await trafficRelay.stop();
-        if (computeMarket) await computeMarket.stop();
-        if (storageVault) await storageVault.stop();
-        await revenue.stop();
-        if (trainer) await trainer.stop();
-        if (resources) await resources.stop();
-        if (remote) await remote.stop();
-        if (swarm) await swarm.stop();
-        await memory.close();
-        await blockchain.close();
-        await gateway.stop();
-        console.log('  ✅ Clean shutdown complete.');
-        if (!isPlatform) {
-            const revStats = revenue.getStats();
-            console.log(`  💰 Total earned: ${revStats.totalEarned.toFixed(4)} GSTD (${revStats.settlementsCount} settlements)`);
-        }
-        process.exit(0);
+    let shutdownPromise: Promise<void> | null = null;
+    const shutdown = (): Promise<void> => {
+        if (shutdownPromise) return shutdownPromise;
+        shuttingDown = true;
+        shutdownPromise = (async () => {
+            const shutdownTimeout = setTimeout(() => {
+                console.error('  ❌ Shutdown timed out after 30 seconds.');
+                process.exit(1);
+            }, 30_000);
+            console.log(`\n  🛑 Shutting down GSTD ${isPlatform ? 'Platform' : 'SuperNode'}...`);
+            logActivity('Shutdown initiated', 'warn');
+            clearTimeout(updateStartTimer);
+            clearInterval(updateInterval);
+            if (uptimeDaemon) uptimeDaemon.stop();
+            if (p2pNode) await p2pNode.stop();
+            if (fastifyGateway) await fastifyGateway.close();
+            if (mobileNode) await mobileNode.stop();
+            await tonConnect.close();
+            if (naas) await naas.stop();
+            if (trafficRelay) await trafficRelay.stop();
+            if (computeMarket) await computeMarket.stop();
+            if (storageVault) await storageVault.stop();
+            await revenue.stop();
+            if (trainer) await trainer.stop();
+            if (resources) await resources.stop();
+            if (remote) await remote.stop();
+            await gateway.stop();
+            if (swarm) await swarm.stop();
+            await memory.close();
+            await blockchain.close();
+            console.log('  ✅ Clean shutdown complete.');
+            if (!isPlatform) {
+                const revStats = revenue.getStats();
+                console.log(`  💰 Total earned: ${revStats.totalEarned.toFixed(4)} GSTD (${revStats.settlementsCount} settlements)`);
+            }
+            clearTimeout(shutdownTimeout);
+            process.exit(0);
+        })();
+        return shutdownPromise;
     };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    const onShutdownSignal = () => {
+        void shutdown().catch(err => {
+            console.error('  ❌ Graceful shutdown failed:', err);
+            process.exitCode = 1;
+        });
+    };
+    process.on('SIGINT', onShutdownSignal);
+    process.on('SIGTERM', onShutdownSignal);
 }
 
 main().catch((err) => {

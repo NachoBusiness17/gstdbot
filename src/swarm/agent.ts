@@ -98,6 +98,8 @@ export class SwarmAgent {
     private heartbeatRetryTimer: NodeJS.Timeout | null = null;
     private taskPollTimer: NodeJS.Timeout | null = null;
     private priorityPollTimer: NodeJS.Timeout | null = null;
+    private backgroundTimers: NodeJS.Timeout[] = [];
+    private campaignStartTimer: NodeJS.Timeout | null = null;
     private startedAt = Date.now();
     private stats: SwarmStats;
     private p2pNode: any = null;
@@ -208,10 +210,8 @@ export class SwarmAgent {
         // Fetch initial rewards/tier info
         await this.fetchRewardsInfo();
 
-        // Heartbeat every 8 minutes. Node TTL on the platform is 10 min,
-        // so this keeps the node alive with comfortable margin while staying
-        // well within the Vercel KV free tier (3K req/day).
-        this.heartbeatTimer = setInterval(() => this.heartbeat(), 15 * 60_000);
+        // Keep the fallback heartbeat inside the platform's 10-minute node TTL.
+        this.heartbeatTimer = setInterval(() => this.heartbeat(), 8 * 60_000);
 
         // Start task polling (every 30 seconds for general queue)
         this.taskPollTimer = setInterval(() => this.pollTasks(), 30_000);
@@ -220,23 +220,26 @@ export class SwarmAgent {
         this.priorityPollTimer = setInterval(() => this.pollPriorityInference(), 5_000);
 
         // Fetch peers every 60 seconds
-        setInterval(() => this.fetchPeers(), 60_000);
+        this.backgroundTimers.push(setInterval(() => this.fetchPeers(), 60_000));
 
         // Refresh tier info every 5 minutes
-        setInterval(() => this.fetchRewardsInfo(), 5 * 60_000);
+        this.backgroundTimers.push(setInterval(() => this.fetchRewardsInfo(), 5 * 60_000));
 
         // Scan and join new campaigns every 10 minutes
-        setInterval(() => this.joinActiveCampaigns().catch(() => {}), 10 * 60_000);
+        this.backgroundTimers.push(setInterval(() => this.joinActiveCampaigns().catch(() => {}), 10 * 60_000));
 
         // Retry quorum settlements that couldn't reach the platform when
         // first computed (e.g. during an outage) — every 2 minutes
-        setInterval(() => this.retryPendingSettlements().catch(() => {}), 2 * 60_000);
+        this.backgroundTimers.push(setInterval(() => this.retryPendingSettlements().catch(() => {}), 2 * 60_000));
 
         // Retry task-completion reports that couldn't reach the platform —
         // this is what makes a real reward actually get counted after an
         // outage, instead of the work being done for nothing
-        setInterval(() => this.retryPendingTaskReports().catch(() => {}), 2 * 60_000);
-        setTimeout(() => this.joinActiveCampaigns().catch(() => {}), 15_000); // initial check after 15s
+        this.backgroundTimers.push(setInterval(() => this.retryPendingTaskReports().catch(() => {}), 2 * 60_000));
+        this.campaignStartTimer = setTimeout(() => {
+            this.campaignStartTimer = null;
+            this.joinActiveCampaigns().catch(() => {});
+        }, 15_000); // initial check after 15s
 
         // Initial heartbeat
         await this.heartbeat();
@@ -252,6 +255,10 @@ export class SwarmAgent {
         if (this.heartbeatRetryTimer) clearTimeout(this.heartbeatRetryTimer);
         if (this.taskPollTimer) clearInterval(this.taskPollTimer);
         if (this.priorityPollTimer) clearInterval(this.priorityPollTimer);
+        for (const timer of this.backgroundTimers) clearInterval(timer);
+        this.backgroundTimers = [];
+        if (this.campaignStartTimer) clearTimeout(this.campaignStartTimer);
+        this.campaignStartTimer = null;
 
         // Deregister from swarm
         try {

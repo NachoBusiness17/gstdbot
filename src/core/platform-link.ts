@@ -54,6 +54,10 @@ export class PlatformLink extends EventEmitter {
     private walletAddress: string;
     private version: string;
     private heartbeatTimer: NodeJS.Timeout | null = null;
+    private heartbeatInFlight: Promise<void> | null = null;
+    private taskPollInFlight: Promise<void> | null = null;
+    private registrationRetryTimer: NodeJS.Timeout | null = null;
+    private registrationRetryAttempt = 0;
     private registered = false;
     private lastHeartbeat: Date | null = null;
     private failCount = 0;
@@ -92,7 +96,7 @@ export class PlatformLink extends EventEmitter {
         await this.register();
 
         // Start heartbeat loop
-        this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), intervalMs);
+        this.heartbeatTimer = setInterval(() => { void this.runHeartbeat(); }, intervalMs);
         console.log(`  🔗 Platform Link: heartbeat every ${intervalMs / 1000}s → ${this.platformUrl}`);
     }
 
@@ -143,13 +147,26 @@ export class PlatformLink extends EventEmitter {
             const data: any = await resp.json();
             this.registered = true;
             this.failCount = 0;
+            this.registrationRetryAttempt = 0;
+            if (this.registrationRetryTimer) clearTimeout(this.registrationRetryTimer);
+            this.registrationRetryTimer = null;
             this.emit('registered', data);
             console.log(`  ✅ Platform Link: node registered (${this.nodeId})`);
         } catch (e: any) {
             this.failCount++;
             this.emit('register:error', { error: e.message, failCount: this.failCount });
-            // Retry on next heartbeat
+            this.scheduleRegistrationRetry();
         }
+    }
+
+    private scheduleRegistrationRetry(): void {
+        if (this.registered || this.registrationRetryTimer) return;
+        const delayMs = Math.min(1000 * 2 ** this.registrationRetryAttempt, 60_000);
+        this.registrationRetryAttempt++;
+        this.registrationRetryTimer = setTimeout(() => {
+            this.registrationRetryTimer = null;
+            void this.register();
+        }, delayMs);
     }
 
     private async sendHeartbeat() {
@@ -228,6 +245,17 @@ export class PlatformLink extends EventEmitter {
         }
     }
 
+    private async runHeartbeat(): Promise<void> {
+        if (this.heartbeatInFlight) return;
+        const operation = this.sendHeartbeat();
+        this.heartbeatInFlight = operation;
+        try {
+            await operation;
+        } finally {
+            if (this.heartbeatInFlight === operation) this.heartbeatInFlight = null;
+        }
+    }
+
     _processCommands(
         commands: unknown[],
         verifyFn: (cmd: PlatformCommand) => boolean = verifyPlatformCommand,
@@ -260,8 +288,19 @@ export class PlatformLink extends EventEmitter {
     // Polling is the supported task-delivery path; retry frequently enough to keep
     // queue latency low while staying within the platform's per-node rate limit.
     startTaskLoop(intervalMs = 30000) {
-        this.taskTimer = setInterval(() => this.pollAndProcess(), intervalMs);
+        this.taskTimer = setInterval(() => { void this.runTaskPoll(); }, intervalMs);
         console.log(`  ⚡ Task loop: fallback poll every ${intervalMs / 1000}s (M4: push-primary)`);
+    }
+
+    private async runTaskPoll(): Promise<void> {
+        if (this.taskPollInFlight) return;
+        const operation = this.pollAndProcess();
+        this.taskPollInFlight = operation;
+        try {
+            await operation;
+        } finally {
+            if (this.taskPollInFlight === operation) this.taskPollInFlight = null;
+        }
     }
 
     private async pollAndProcess() {
@@ -356,8 +395,17 @@ export class PlatformLink extends EventEmitter {
         };
     }
 
-    stop() {
+    async stop(): Promise<void> {
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
         if (this.taskTimer) clearInterval(this.taskTimer);
+        if (this.registrationRetryTimer) clearTimeout(this.registrationRetryTimer);
+        this.heartbeatTimer = null;
+        this.taskTimer = null;
+        this.registrationRetryTimer = null;
+        await Promise.all(
+            [this.heartbeatInFlight, this.taskPollInFlight].filter(
+                (operation): operation is Promise<void> => operation !== null,
+            ),
+        );
     }
 }

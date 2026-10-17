@@ -202,10 +202,12 @@ install_nodejs() {
         apk)    sudo apk add --no-cache nodejs npm >/dev/null 2>&1;;
         brew)
             brew install node@22 >/dev/null 2>&1 || {
-                curl -fsSL https://fnm.vercel.app/install 2>/dev/null | bash >/dev/null 2>&1
-                export PATH="$HOME/.local/share/fnm:$PATH"
-                eval "$(fnm env 2>/dev/null)" 2>/dev/null || true
-                fnm install 22 >/dev/null 2>&1 && fnm use 22 >/dev/null 2>&1
+                err "Homebrew could not install Node.js 22."
+                return 1
+            }
+            brew link --overwrite --force node@22 >/dev/null 2>&1 || {
+                err "Homebrew could not link Node.js 22."
+                return 1
             }
             ;;
         *)
@@ -404,7 +406,7 @@ if [ -f "$IPFS_BIN" ] && [ ! -d "$IPFS_PATH/config" ] && [ ! -f "$IPFS_PATH/conf
     info "IPFS initialized"
 fi
 
-# Set up Cloudflare Tunnel binary (public URL — accessible from Vercel/cloud)
+# Set up Cloudflare Tunnel binary for public node access.
 if [ -f "$INSTALL_DIR/tunnel.sh" ] && [ ! -x "$INSTALL_DIR/tunnel.sh" ]; then
     chmod +x "$INSTALL_DIR/tunnel.sh"
 fi

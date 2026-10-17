@@ -147,7 +147,7 @@ export async function startDashboard(port: number = 8080, host: string = '0.0.0.
                 arch: arch(),
                 uptime: process.uptime(),
                 os_uptime: osUptime(),
-                version: '3.4.0',
+                version: '3.5.0',
                 started_at: new Date(nodeStartedAt).toISOString(),
                 ip: getLocalIP(),
                 node_env: process.env.NODE_ENV || 'production',

@@ -126,7 +126,7 @@ export class UptimeDaemon {
                     wallet_address: this.walletAddress,
                     capabilities,
                     public_url: tunnelUrl || '',
-                    version: '3.4.0',
+                    version: '3.5.0',
                 }),
                 signal: AbortSignal.timeout(10000),
             });
@@ -196,7 +196,7 @@ export class UptimeDaemon {
             wallet_address: this.walletAddress,
             timestamp: Date.now(),
             tier: this.classifyTier(cpuInfo.length, totalRam / (1024 ** 3), this.cachedIOPS),
-            version: '3.4.0',
+            version: '3.5.0',
             containers,
             multiaddrs,
             ...(capabilities.length && { capabilities }),

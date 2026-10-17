@@ -181,10 +181,12 @@ install_nodejs() {
         apk)    sudo apk add --no-cache nodejs npm 2>/dev/null;;
         brew)
             brew install node@22 2>/dev/null || {
-                curl -fsSL https://fnm.vercel.app/install | bash 2>/dev/null
-                export PATH="$HOME/.local/share/fnm:$PATH"
-                eval "$(fnm env 2>/dev/null)" 2>/dev/null
-                fnm install 22 2>/dev/null && fnm use 22 2>/dev/null
+                err "Homebrew could not install Node.js 22."
+                return 1
+            }
+            brew link --overwrite --force node@22 2>/dev/null || {
+                err "Homebrew could not link Node.js 22."
+                return 1
             }
             ;;
         *)

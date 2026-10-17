@@ -83,14 +83,16 @@ const DEFAULT_PRICING: ResourcePricing = {
 // ─── Resource Sharing Manager ────────────────────────────────────
 export class ResourceSharing {
     private config: NodeConfig;
+    private walletAddress: string;
     private pricing: ResourcePricing;
     private meter: ResourceMeter;
     private activeRequests: Map<string, ResourceRequest> = new Map();
     private publishTimer: NodeJS.Timeout | null = null;
     private meterTimer: NodeJS.Timeout | null = null;
 
-    constructor(config: NodeConfig) {
+    constructor(config: NodeConfig, walletAddress: string) {
         this.config = config;
+        this.walletAddress = walletAddress;
         this.pricing = { ...DEFAULT_PRICING };
         this.meter = {
             cpuHoursProvided: 0,
@@ -124,24 +126,42 @@ export class ResourceSharing {
 
     // ─── Publish Resources ───────────────────────────────────────
     async publishResources(): Promise<void> {
+        if (!this.walletAddress.trim()) {
+            console.warn('[Resources] Cannot publish resource capacity without a configured wallet.');
+            return;
+        }
         const resources = this.getAvailableResources();
 
         try {
-            await fetch(`${this.config.swarm.apiUrl}/resources/publish`, {
+            const response = await fetch(`${this.config.swarm.apiUrl}/nodes/heartbeat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Wallet-Address': this.config.nodeId,
+                    'X-Wallet-Address': this.walletAddress,
+                    'X-Node-Id': this.config.nodeId,
                 },
                 body: JSON.stringify({
-                    cpu_available: resources.compute.cpuCores,
-                    ram_available: resources.compute.ramFreeMb,
-                    gpu: resources.compute.gpuModel || '',
-                    models: resources.models,
+                    node_id: this.config.nodeId,
+                    wallet_address: this.walletAddress,
+                    node_name: this.config.nodeName,
+                    node_version: this.config.version,
+                    mode: 'node',
+                    uptime_hours: Math.round(process.uptime() / 3600),
+                    capabilities: resources.models,
+                    storage_free_gb: resources.storage.availableGb,
+                    ram_free_mb: resources.compute.ramFreeMb,
+                    gpu_vram_mb: resources.compute.gpuVramMb,
                 }),
                 signal: AbortSignal.timeout(5000),
             });
-        } catch (_e) { }
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+        } catch (error) {
+            console.warn(
+                `[Resources] Resource heartbeat failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     getAvailableResources(): NodeResources {

@@ -55,7 +55,7 @@ LABEL org.opencontainers.image.title="GSTD Node OS"
 LABEL org.opencontainers.image.description="Sovereign AI Node — earn GSTD by processing AI queries"
 LABEL org.opencontainers.image.url="https://gstdbot.gstdtoken.com"
 LABEL org.opencontainers.image.source="https://github.com/gstdcoin/gstdbot"
-LABEL org.opencontainers.image.version="3.4.0"
+LABEL org.opencontainers.image.version="3.5.0"
 LABEL org.opencontainers.image.vendor="GSTD"
 
 ENV NODE_OPTIONS="--no-deprecation"

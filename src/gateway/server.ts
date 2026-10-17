@@ -484,7 +484,7 @@ export class OmegaGateway {
         this.app.get('/health', (_req, res) => {
             res.json({
                 status: 'ok',
-                version: require('../../package.json').version || '3.4.0',
+                version: require('../../package.json').version || '3.5.0',
                 uptime: process.uptime(),
                 activeSessions: this.sessions.count(),
                 connectedClients: this.clients.size,
@@ -2433,7 +2433,7 @@ export class OmegaGateway {
         this.app.get('/api/node/config', (_req, res) => {
             res.json({
                 nodeId: process.env.NODE_ID || 'unknown',
-                version: process.env.npm_package_version || require('../../package.json').version || '3.4.0',
+                version: process.env.npm_package_version || require('../../package.json').version || '3.5.0',
                 mode: process.env.AI_MODE || 'cloud',
                 platform: process.platform,
                 arch: process.arch,
@@ -4875,6 +4875,8 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
     }
 
     async stop(): Promise<void> {
+        await this.platformLink?.stop();
+        await this.scheduler.stop();
         this.wss?.close();
         this.server.close();
     }
