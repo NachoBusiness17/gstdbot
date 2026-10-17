@@ -4773,7 +4773,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                             dln: !!this.subsystems?.blockchain,
                             maxConcurrentTasks: 5,
                         }));
-                        this.platformLink.start(10 * 60_000).catch(() => {});
+                        this.platformLink.start(2 * 60_000).catch(() => {});
                         this.platformLink.startTaskLoop(5000); // poll for tasks every 5s → nodes earn GSTD
 
                         // Register scheduled tasks

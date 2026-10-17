@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { PlatformLink } from './platform-link.js';
 
 function makePL(): PlatformLink {
@@ -9,6 +9,10 @@ function makePL(): PlatformLink {
         version:       '0.0.0',
     });
 }
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
 
 describe('PlatformLink._processCommands gate', () => {
     it('does not emit when sig field is missing', () => {
@@ -75,5 +79,76 @@ describe('PlatformLink._processCommands gate', () => {
 
         expect(received).toHaveLength(1);
         expect((received[0] as any).type).toBe('a');
+    });
+});
+
+describe('PlatformLink task delivery', () => {
+    it('uses the authenticated POST poll contract and submits successful results', async () => {
+        const pl = makePL();
+        (pl as any).registered = true;
+        pl.setCapabilitiesProvider(() => ({
+            models: ['llama3.2:1b'],
+            channels: [],
+            apps: 0,
+            memory: false,
+            openclaw: false,
+            dln: false,
+            maxConcurrentTasks: 1,
+        }));
+
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                task: {
+                    task_id: 'task-1',
+                    type: 'inference',
+                    payload: { model: 'llama3.2:1b', prompt: 'hello' },
+                },
+            }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{ message: { content: 'hello back' } }],
+            }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await (pl as any).pollAndProcess();
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        const [pollUrl, pollOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(pollUrl).toBe('http://localhost:9999/api/v1/tasks/poll');
+        expect(pollOptions.method).toBe('POST');
+        expect(new Headers(pollOptions.headers).get('x-wallet-address')).toBe('EQtest');
+        expect(JSON.parse(String(pollOptions.body))).toMatchObject({
+            node_id: 'test-node-id',
+            capabilities: ['inference', 'llama3.2:1b'],
+        });
+
+        const [completionUrl, completionOptions] = fetchMock.mock.calls[2] as [string, RequestInit];
+        expect(completionUrl).toBe('http://localhost:9999/api/v1/tasks/complete');
+        expect(new Headers(completionOptions.headers).get('x-wallet-address')).toBe('EQtest');
+        expect(JSON.parse(String(completionOptions.body))).toEqual({
+            task_id: 'task-1',
+            node_id: 'test-node-id',
+            result: 'hello back',
+        });
+    });
+
+    it('does not submit an empty inference result as a completed task', async () => {
+        const pl = makePL();
+        (pl as any).registered = true;
+        const taskError = vi.fn();
+        pl.on('task:error', taskError);
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                task: { task_id: 'task-2', payload: { prompt: 'hello' } },
+            }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{ message: { content: '' } }],
+            }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await (pl as any).pollAndProcess();
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(taskError).toHaveBeenCalledOnce();
     });
 });

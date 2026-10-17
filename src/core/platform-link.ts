@@ -4,7 +4,7 @@
  * 
  * Maintains persistent connection to GSTD platform:
  *  - Registers node on startup with capabilities
- *  - Sends heartbeat every 60s with status
+ *  - Sends heartbeat every 120s with status
  *  - Reports resource availability for swarm tasks
  *  - Syncs earnings and rewards
  *  - Handles platform commands (update, restart, configure)
@@ -62,6 +62,7 @@ export class PlatformLink extends EventEmitter {
     private p2pPeerId: string = '';
     private p2pMultiaddrs: string[] = [];
     private nodePubkey: string = '';
+    private lastTaskErrorLog = 0;
 
     constructor(config: { platformUrl: string; nodeId: string; walletAddress: string; version: string }) {
         super();
@@ -82,7 +83,7 @@ export class PlatformLink extends EventEmitter {
     setWalletAddress(address: string) { this.walletAddress = address; }
     setNodePubkey(pubkeyHex: string) { this.nodePubkey = pubkeyHex; }
 
-    async start(intervalMs = 60000) {
+    async start(intervalMs = 120_000) {
         // Delay registration briefly so wallet.init() completes first
         // (gateway.start() fires this before index.ts reaches wallet init at step 4)
         if (!this.walletAddress) {
@@ -101,6 +102,9 @@ export class PlatformLink extends EventEmitter {
 
     private async register() {
         try {
+            if (!this.walletAddress.trim()) {
+                throw new Error('A wallet address is required before registering the node');
+            }
             const caps = this.capabilitiesProvider?.() || {};
             const tunnelUrl = this.readTunnelUrl() || process.env.GSTD_PUBLIC_URL || '';
             const models: string[] = (caps as any).models || [];
@@ -149,6 +153,11 @@ export class PlatformLink extends EventEmitter {
     }
 
     private async sendHeartbeat() {
+        if (!this.registered) {
+            await this.register();
+            if (!this.registered) return;
+        }
+
         const stats = this.statsCollector?.() || {};
         const caps  = this.capabilitiesProvider?.() || {};
         const models: string[] = (caps as any).models || [];
@@ -248,8 +257,8 @@ export class PlatformLink extends EventEmitter {
     private taskTimer: NodeJS.Timeout | null = null;
     private tasksBusy = false;
 
-    // M4: polling is now fallback only — platform pushes tasks directly via /api/v1/tasks/push.
-    // Default interval raised to 30s to reduce unnecessary platform traffic.
+    // Polling is the supported task-delivery path; retry frequently enough to keep
+    // queue latency low while staying within the platform's per-node rate limit.
     startTaskLoop(intervalMs = 30000) {
         this.taskTimer = setInterval(() => this.pollAndProcess(), intervalMs);
         console.log(`  ⚡ Task loop: fallback poll every ${intervalMs / 1000}s (M4: push-primary)`);
@@ -260,55 +269,79 @@ export class PlatformLink extends EventEmitter {
         this.tasksBusy = true;
         try {
             const resp = await fetch(
-                `${this.platformUrl}/api/v1/tasks/poll?node_id=${encodeURIComponent(this.nodeId)}`,
-                { signal: AbortSignal.timeout(8000) }
+                `${this.platformUrl}/api/v1/tasks/poll`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Wallet-Address': this.walletAddress,
+                    },
+                    body: JSON.stringify({
+                        node_id: this.nodeId,
+                        capabilities: ['inference', ...(this.capabilitiesProvider?.().models || [])],
+                        resources: {},
+                    }),
+                    signal: AbortSignal.timeout(25000),
+                }
             );
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                throw new Error(`Task poll failed: HTTP ${resp.status}`);
+            }
             const data: any = await resp.json();
             if (!data.task?.task_id) return;
 
-            const { task_id, model = 'llama3.2:3b', prompt = '' } = data.task;
+            const task = data.task;
+            const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
+            const task_id: string = task.task_id;
+            const model: string = payload.model || task.model || 'llama3.2:3b';
+            const prompt: unknown = payload.prompt ?? task.prompt ?? '';
+            const taskMessages: unknown = payload.messages ?? task.messages;
+            if (typeof prompt !== 'string' || (!prompt.trim() && !Array.isArray(taskMessages))) {
+                throw new Error(`Task ${task_id} has no inference prompt`);
+            }
             const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 
             let messages: any[];
-            try { messages = JSON.parse(prompt); } catch { messages = [{ role: 'user', content: prompt }]; }
+            if (Array.isArray(taskMessages)) {
+                messages = taskMessages;
+            } else {
+                try { messages = JSON.parse(prompt); } catch { messages = [{ role: 'user', content: prompt }]; }
+            }
             if (!Array.isArray(messages)) messages = [{ role: 'user', content: prompt }];
 
-            try {
-                const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model, messages, stream: false }),
-                    signal: AbortSignal.timeout(90000),
-                });
-                const aiData: any = aiResp.ok ? await aiResp.json() : null;
-                const content = aiData?.choices?.[0]?.message?.content || '';
-
-                await fetch(`${this.platformUrl}/api/v1/tasks/complete`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        task_id,
-                        node_id: this.nodeId,
-                        result: content || null,
-                        error: content ? null : 'empty response',
-                    }),
-                    signal: AbortSignal.timeout(10000),
-                });
-
-                if (content) {
-                    console.log(`  ✅ Task ${task_id} completed (${model}, ${content.length} chars)`);
-                    this.emit('task:completed', { task_id, model });
-                }
-            } catch (err: any) {
-                await fetch(`${this.platformUrl}/api/v1/tasks/complete`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ task_id, node_id: this.nodeId, error: err.message }),
-                    signal: AbortSignal.timeout(5000),
-                }).catch(() => {});
+            const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, messages, stream: false }),
+                signal: AbortSignal.timeout(90000),
+            });
+            if (!aiResp.ok) throw new Error(`Local inference failed: HTTP ${aiResp.status}`);
+            const aiData: any = await aiResp.json();
+            const content = aiData?.choices?.[0]?.message?.content;
+            if (typeof content !== 'string' || !content.trim()) {
+                throw new Error('Local inference returned an empty response');
             }
-        } catch { /* ignore poll errors */ } finally {
+
+            const completion = await fetch(`${this.platformUrl}/api/v1/tasks/complete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Wallet-Address': this.walletAddress,
+                },
+                body: JSON.stringify({ task_id, node_id: this.nodeId, result: content }),
+                signal: AbortSignal.timeout(25000),
+            });
+            if (!completion.ok) throw new Error(`Task completion failed: HTTP ${completion.status}`);
+
+            console.log(`  ✅ Task ${task_id} completed (${model}, ${content.length} chars)`);
+            this.emit('task:completed', { task_id, model });
+        } catch (err: any) {
+            if (Date.now() - this.lastTaskErrorLog > 60_000) {
+                this.lastTaskErrorLog = Date.now();
+                console.warn(`[PlatformLink] Task poll or execution failed: ${err.message}`);
+            }
+            this.emit('task:error', { error: err.message, nodeId: this.nodeId });
+        } finally {
             this.tasksBusy = false;
         }
     }

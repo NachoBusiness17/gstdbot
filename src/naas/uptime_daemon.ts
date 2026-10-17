@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'fs';
 import { logActivity } from '../gateway/server.js';
 import { platformHealth } from '../lib/platform-health.js';
 
-const HEARTBEAT_INTERVAL_MS = 10 * 60_000; // Every 10 minutes (KV write budget)
+const HEARTBEAT_INTERVAL_MS = 2 * 60_000; // Stay well inside the platform's 10-minute node TTL
 const PLATFORM_URL = process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
 
 export interface ContainerStatus {
@@ -61,6 +61,7 @@ export class UptimeDaemon {
     private cachedPing: number = 0;
     private heartbeatCount: number = 0;
     private heartbeatInFlight: boolean = false;
+    private platformRegistered = false;
 
     constructor(nodeId: string, walletAddress: string = '') {
         this.nodeId = nodeId;
@@ -85,17 +86,11 @@ export class UptimeDaemon {
         // Pre-warm Ollama models so cold-start latency doesn't kill first inference
         this.warmupOllamaModels().catch(() => {});
 
-        // Explicit pre-registration: call /register before any heartbeat to ensure
-        // the node is in KV. The deployed platform Worker's heartbeat() auto-registration
-        // path throws TypeError when CF-injected request headers are copied, causing
-        // error 1101 when the node is not found in KV. Calling /register directly
-        // avoids that path entirely and is idempotent (safe to call on every restart).
-        this.registerNode().catch(() => {});
+        // Register before sending the initial heartbeat; failed registration is retried
+        // by the next heartbeat interval.
+        this.sendHeartbeat().catch(err => logActivity(`Initial platform heartbeat failed: ${err.message}`, 'warn'));
 
-        // Send first heartbeat immediately
-        this.sendHeartbeat().catch(() => {});
-
-        // Then every 30 seconds
+        // Refresh well before the platform's node record expires.
         this.timer = setInterval(() => {
             this.sendHeartbeat().catch(err => {
                 if (this.heartbeatCount % 10 === 0) {
@@ -117,7 +112,7 @@ export class UptimeDaemon {
 
     // ─── Explicit Registration ───────────────────────────────
 
-    private async registerNode(): Promise<void> {
+    private async registerNode(): Promise<boolean> {
         try {
             const capabilities = await this.getOllamaModels();
             const tunnelUrl = this.getTunnelUrl();
@@ -137,15 +132,21 @@ export class UptimeDaemon {
             });
             if (resp.ok) {
                 platformHealth.recordSuccess();
+                this.platformRegistered = true;
+                return true;
             } else {
                 const body = await resp.text().catch(() => '');
                 if (resp.status === 402 && body.includes('DEPLOYMENT_DISABLED')) {
                     console.warn('[NaaS] Platform disabled (DEPLOYMENT_DISABLED). NaaS heartbeats suspended.');
                     this.stop();
                 }
+                this.platformRegistered = false;
+                return false;
             }
-        } catch {
-            // Silent — heartbeat will retry; registration is best-effort
+        } catch (err: any) {
+            this.platformRegistered = false;
+            logActivity(`Node registration failed: ${err.message}`, 'warn');
+            return false;
         }
     }
 
@@ -169,6 +170,8 @@ export class UptimeDaemon {
 
     private async doSendHeartbeat(): Promise<void> {
         this.heartbeatCount++;
+        if (!this.platformRegistered && !(await this.registerNode())) return;
+
         const containers = this.getContainerStatuses();
         const runningChains = containers
             .filter(c => c.status === 'running' && c.chain)

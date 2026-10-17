@@ -66,7 +66,7 @@ Your Hardware
 ## What Runs Automatically
 
 ### AI Inference
-Your node polls `platform.gstdtoken.com/api/v1/tasks/poll` every 5 seconds for priority inference tasks. When a task arrives (type: `inference`), the node processes it using the configured AI backend and posts the result back to the platform. The result is returned to the requesting client within seconds.
+Your node sends a wallet-bound heartbeat every 2 minutes and polls `platform.gstdtoken.com/api/v1/tasks/poll` every 30 seconds using `POST` with its `X-Wallet-Address` header. When an inference task arrives, the node runs it through local Ollama and submits a non-empty result to `POST /api/v1/tasks/complete`. Failed or empty inference results are not submitted as completed tasks.
 
 All inference is served through the GSTD network — no external AI provider accounts or API keys required.
 
