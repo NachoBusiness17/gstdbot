@@ -44,6 +44,7 @@ if (typeof (Promise as any).withResolvers !== 'function') {
 
 import { OmegaGateway, logActivity } from './gateway/server.js';
 import { fastForwardNodeUpdate, rollbackNodeUpdate } from './lib/node-update.js';
+import { DEFAULT_GSTD_API_URL, normalizeGstdApiUrl } from './core/api-url.js';
 import { isRegistered, getEntry, modelFitsInRam } from './lib/model-registry.js';
 import { detectOdysseus } from './odysseus/detector.js';
 import { SecurityHardening } from './security/hardening.js';
@@ -131,8 +132,6 @@ export interface NodeConfig {
 
 async function loadConfig(): Promise<NodeConfig> {
     const configPath = join(homedir(), '.config', 'gstdbot', 'config.json');
-    const defaultApiUrl = 'https://app.gstdtoken.com/api/v1';
-    const legacyApiUrl = 'https://platform.gstdtoken.com/api/v1';
     const defaults: NodeConfig = {
         version: '3.5.0',
         mode: (process.env.GSTD_MODE as any) || 'cloud',
@@ -143,7 +142,7 @@ async function loadConfig(): Promise<NodeConfig> {
             enabled: process.env.SWARM_ENABLED !== 'false' && process.env.GSTD_MODE !== 'platform',
             maxCPU: parseInt(process.env.GSTD_MAX_CPU || '80'),
             maxRAM: parseInt(process.env.GSTD_MAX_RAM || '70'),
-            apiUrl: process.env.GSTD_API_URL || defaultApiUrl,
+            apiUrl: process.env.GSTD_API_URL || DEFAULT_GSTD_API_URL,
         },
         dashboard: {
             host: '0.0.0.0',
@@ -177,8 +176,8 @@ async function loadConfig(): Promise<NodeConfig> {
         try {
             const file = JSON.parse(readFileSync(configPath, 'utf-8'));
             const configuredApiUrl = process.env.GSTD_API_URL || file.swarm?.apiUrl || defaults.swarm.apiUrl;
-            const apiUrl = configuredApiUrl === legacyApiUrl ? defaultApiUrl : configuredApiUrl;
-            if (configuredApiUrl === legacyApiUrl) {
+            const apiUrl = normalizeGstdApiUrl(configuredApiUrl);
+            if (apiUrl !== configuredApiUrl) {
                 console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
             }
             const merged = {
@@ -191,10 +190,11 @@ async function loadConfig(): Promise<NodeConfig> {
             return merged;
         } catch (_e) { }
     }
-    if (defaults.swarm.apiUrl === legacyApiUrl) {
+    const apiUrl = normalizeGstdApiUrl(defaults.swarm.apiUrl);
+    if (apiUrl !== defaults.swarm.apiUrl) {
         console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
-        defaults.swarm.apiUrl = defaultApiUrl;
     }
+    defaults.swarm.apiUrl = apiUrl;
     return defaults;
 }
 
