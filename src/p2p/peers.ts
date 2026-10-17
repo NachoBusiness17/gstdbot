@@ -134,7 +134,7 @@ export class PeerManager extends EventEmitter {
         if (allSeeds.length === 0 && this.peers.size === 0) {
             console.log('[Peers] No env/GitHub seeds found — falling back to central registry (platform.gstdtoken.com)');
             try {
-                const apiBase = process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
+                const apiBase = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
                 const resp = await fetch(`${apiBase}/api/v1/nodes/list`, { signal: AbortSignal.timeout(8000) });
                 if (resp.ok) {
                     const data: any = await resp.json();

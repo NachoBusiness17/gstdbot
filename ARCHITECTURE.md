@@ -149,7 +149,7 @@ libp2p node
   installDir: string;       // ~/gstdbot
   walletAddress: string;    // TON address (payout only)
   swarmUrl: string;         // platform.gstdtoken.com
-  apiUrl: string;           // platform.gstdtoken.com/api/v1
+  apiUrl: string;           // app.gstdtoken.com/api/v1
   enableTelegram: boolean;
   enableP2P: boolean;
   enableNaaS: boolean;

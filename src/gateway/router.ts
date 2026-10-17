@@ -181,7 +181,7 @@ export class NeuralRouter {
 
         const ollamaModel = toOllamaModel(requestedModel);
         const ollamaUrl   = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-        const platformUrl = (process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com').replace(/\/$/, '');
+        const platformUrl = (process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com').replace(/\/$/, '');
 
         // ─── L2: GSTD Task Queue (submit → node processes → poll result → earnings) ─
         try {
@@ -527,7 +527,7 @@ CRITICAL: Never mention experts, models, or the synthesis process. Respond in th
 
 export async function getGstdPrice(): Promise<number> {
     try {
-        const resp = await fetch('https://platform.gstdtoken.com/api/v1/market/price', { signal: AbortSignal.timeout(3000) });
+        const resp = await fetch('https://app.gstdtoken.com/api/v1/market/price', { signal: AbortSignal.timeout(3000) });
         if (resp.ok) {
             const data: any = await resp.json();
             return data.gstd_price_usd || data.price_usd || 0.001;

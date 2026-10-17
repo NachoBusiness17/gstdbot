@@ -52,7 +52,7 @@ export interface GatewayConfig {
 const DEFAULT_CONFIG: GatewayConfig = {
     port: 18789,
     apiPort: 8080,
-    swarmUrl: process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com',
+    swarmUrl: process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
     cocoonEnabled: process.env.GSTD_COCOON_ENABLED !== 'false',
     sovereigntyMode: (process.env.GSTD_SOVEREIGNTY_MODE as any) || 'full',
 };
@@ -535,7 +535,7 @@ export class OmegaGateway {
                 // Fallback: check via platform API when git is not available
                 try {
                     const currentVersion = require('../../package.json').version || 'unknown';
-                    const apiUrl = process.env.GSTD_API_URL || 'https://platform.gstdtoken.com/api/v1';
+                    const apiUrl = process.env.GSTD_API_URL || 'https://app.gstdtoken.com/api/v1';
                     const resp = await fetch(`${apiUrl}/nodes/update/check?version=${currentVersion}`, {
                         signal: AbortSignal.timeout(5000),
                     });
@@ -4198,7 +4198,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                 let fundBacking = 0;
                 let currentEpoch = 1;
                 try {
-                    const platformUrl = process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
+                    const platformUrl = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
                     const [fundRes] = await Promise.allSettled([
                         fetch(`${platformUrl}/api/v1/fund/status`, { signal: AbortSignal.timeout(3000) }).then(r => r.ok ? r.json() : null),
                     ]);
@@ -4236,7 +4236,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
         // GET /api/node/fund — Sovereign Fund live data
         this.app.get('/api/node/fund', async (_req, res) => {
             try {
-                const platformUrl = process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
+                const platformUrl = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
                 const [statusRes, epochRes, leaderboardRes] = await Promise.allSettled([
                     fetch(`${platformUrl}/api/v1/fund/status`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok ? r.json() : null),
                     fetch(`${platformUrl}/api/v1/fund/epoch`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok ? r.json() : null),
@@ -4605,7 +4605,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
 
             (async () => {
                 const start = Date.now();
-                const platformBase = platform_url || process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
+                const platformBase = platform_url || process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
                 try {
                     let messages: any[];
                     try { messages = JSON.parse(prompt); } catch { messages = [{ role: 'user', content: prompt }]; }

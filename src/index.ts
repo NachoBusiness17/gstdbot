@@ -131,6 +131,8 @@ export interface NodeConfig {
 
 async function loadConfig(): Promise<NodeConfig> {
     const configPath = join(homedir(), '.config', 'gstdbot', 'config.json');
+    const defaultApiUrl = 'https://app.gstdtoken.com/api/v1';
+    const legacyApiUrl = 'https://platform.gstdtoken.com/api/v1';
     const defaults: NodeConfig = {
         version: '3.5.0',
         mode: (process.env.GSTD_MODE as any) || 'cloud',
@@ -141,7 +143,7 @@ async function loadConfig(): Promise<NodeConfig> {
             enabled: process.env.SWARM_ENABLED !== 'false' && process.env.GSTD_MODE !== 'platform',
             maxCPU: parseInt(process.env.GSTD_MAX_CPU || '80'),
             maxRAM: parseInt(process.env.GSTD_MAX_RAM || '70'),
-            apiUrl: process.env.GSTD_API_URL || 'https://platform.gstdtoken.com/api/v1',
+            apiUrl: process.env.GSTD_API_URL || defaultApiUrl,
         },
         dashboard: {
             host: '0.0.0.0',
@@ -174,14 +176,24 @@ async function loadConfig(): Promise<NodeConfig> {
     if (existsSync(configPath)) {
         try {
             const file = JSON.parse(readFileSync(configPath, 'utf-8'));
-            return {
+            const configuredApiUrl = process.env.GSTD_API_URL || file.swarm?.apiUrl || defaults.swarm.apiUrl;
+            const apiUrl = configuredApiUrl === legacyApiUrl ? defaultApiUrl : configuredApiUrl;
+            if (configuredApiUrl === legacyApiUrl) {
+                console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
+            }
+            const merged = {
                 ...defaults, ...file,
-                swarm: { ...defaults.swarm, ...file.swarm },
+                swarm: { ...defaults.swarm, ...file.swarm, apiUrl },
                 dashboard: { ...defaults.dashboard, ...file.dashboard },
                 memory: { ...defaults.memory, ...file.memory },
                 apps: { ...defaults.apps, ...file.apps },
             };
+            return merged;
         } catch (_e) { }
+    }
+    if (defaults.swarm.apiUrl === legacyApiUrl) {
+        console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
+        defaults.swarm.apiUrl = defaultApiUrl;
     }
     return defaults;
 }
@@ -262,7 +274,7 @@ async function main(): Promise<void> {
     const desiredPort = parseInt(process.env.GSTD_DASHBOARD_PORT || process.env.GSTD_API_PORT || '8080');
     const gateway = new OmegaGateway({
         apiPort: desiredPort,
-        swarmUrl: process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com',
+        swarmUrl: process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
         cocoonEnabled: process.env.GSTD_COCOON_ENABLED !== 'false',
         sovereigntyMode: (process.env.GSTD_SOVEREIGNTY_MODE as any) || 'full',
         nodeId: config.nodeId,
@@ -400,7 +412,7 @@ async function main(): Promise<void> {
     if (telegramToken) {
         const telegram = new TelegramChannel({
             botToken: telegramToken,
-            swarmUrl: process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com',
+            swarmUrl: process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
             cocoonEnabled: process.env.GSTD_COCOON_ENABLED !== 'false',
             adminIds: (process.env.TELEGRAM_ADMIN_IDS || '').split(',').filter(Boolean).map(Number),
             communityChat: process.env.TELEGRAM_COMMUNITY_CHAT ? parseInt(process.env.TELEGRAM_COMMUNITY_CHAT) : undefined,
@@ -415,7 +427,7 @@ async function main(): Promise<void> {
     if (gstdAiToken) {
         const gstdAiBot = new GstdAiBot(
             gstdAiToken,
-            process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com',
+            process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
         );
         await gstdAiBot.start();
         console.log('    @gstdaibot: started');
@@ -440,7 +452,7 @@ async function main(): Promise<void> {
     let mobileNode: MobileNodeManager | null = null;
     if (config.mobileNode.enabled) {
         const telegramToken = process.env.TELEGRAM_BOT_TOKEN || '';
-        const apiUrl = process.env.GSTD_SWARM_URL || 'https://platform.gstdtoken.com';
+        const apiUrl = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
         mobileNode = new MobileNodeManager({
             botToken: telegramToken,
             apiUrl: apiUrl.replace(/\/api\/v1$/, '') + '/api/v1',
