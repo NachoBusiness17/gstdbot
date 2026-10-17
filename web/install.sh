@@ -36,6 +36,43 @@ mark_done()  { echo "$1" >> "$STATE_FILE"; log "DONE: $1"; }
 is_done()    { [ -f "$STATE_FILE" ] && grep -qx "$1" "$STATE_FILE" 2>/dev/null; }
 reset_step() { [ -f "$STATE_FILE" ] && sed -i "/$1/d" "$STATE_FILE" 2>/dev/null; true; }
 
+update_existing_checkout() {
+    local branch="$1"
+    local current_hash target_hash
+
+    if [ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no)" ]; then
+        err "Local tracked changes in $INSTALL_DIR; refusing to overwrite them"
+        return 1
+    fi
+
+    git -C "$INSTALL_DIR" fetch --no-tags --quiet origin "$branch" 2>>"$LOG_FILE" || {
+        err "Failed to fetch updates from origin/$branch"
+        return 1
+    }
+    if [ "$(git -C "$INSTALL_DIR" rev-parse --is-shallow-repository)" = "true" ]; then
+        git -C "$INSTALL_DIR" fetch --unshallow --no-tags --quiet origin "$branch" 2>>"$LOG_FILE" || {
+            err "Failed to verify update history for this shallow checkout"
+            return 1
+        }
+    fi
+
+    current_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+    target_hash=$(git -C "$INSTALL_DIR" rev-parse FETCH_HEAD)
+    if [ "$current_hash" = "$target_hash" ]; then
+        info "Already up to date (${current_hash:0:8})"
+        return 0
+    fi
+    if ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$current_hash" "$target_hash"; then
+        err "Local history diverges from origin/$branch; refusing to reset or overwrite it"
+        return 1
+    fi
+    git -C "$INSTALL_DIR" merge --ff-only "$target_hash" >>"$LOG_FILE" 2>&1 || {
+        err "Fast-forward update failed; existing node files were preserved"
+        return 1
+    }
+    info "Updated to ${target_hash:0:8}"
+}
+
 # ─── Handle --fresh flag ─────────────────────────────────────────
 for arg in "$@"; do
     case "$arg" in
@@ -231,19 +268,11 @@ step 4 "Setting up GSTD Node from GitHub..."
 if is_done "gstdbot" && [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/package.json" ]; then
     info "GSTD Node already installed at $INSTALL_DIR"
     info "Checking for updates..."
-    cd "$INSTALL_DIR"
-    if git pull --ff-only 2>>"$LOG_FILE"; then
-        info "Updated to latest"
-    else
-        info "Already up to date (or local changes present)"
-    fi
-    cd - >/dev/null
+    update_existing_checkout main
 else
     if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/package.json" ]; then
         info "GSTD Node found at $INSTALL_DIR, updating..."
-        cd "$INSTALL_DIR"
-        git pull --ff-only 2>>"$LOG_FILE" || true
-        cd - >/dev/null
+        update_existing_checkout main
     else
         info "Cloning GSTD Node from GitHub..."
         if git clone --depth 1 "$REPO_URL" "$INSTALL_DIR" 2>>"$LOG_FILE"; then

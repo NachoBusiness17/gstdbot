@@ -43,6 +43,7 @@ if (typeof (Promise as any).withResolvers !== 'function') {
  */
 
 import { OmegaGateway, logActivity } from './gateway/server.js';
+import { fastForwardNodeUpdate, rollbackNodeUpdate } from './lib/node-update.js';
 import { isRegistered, getEntry, modelFitsInRam } from './lib/model-registry.js';
 import { detectOdysseus } from './odysseus/detector.js';
 import { SecurityHardening } from './security/hardening.js';
@@ -648,49 +649,23 @@ async function main(): Promise<void> {
     //   4. If new version crashes → systemd/PM2 will restart from rolled-back code
     const checkAndUpdate = async () => {
         try {
-            const { execSync } = require('child_process');
             const installDir = config.installDir || join(homedir(), 'gstdbot');
-            
-            // Fetch latest from GitHub
-            execSync('git fetch origin main --quiet 2>/dev/null', { cwd: installDir, timeout: 30000 });
-            
-            // Compare local HEAD with remote
-            const localHash = execSync('git rev-parse HEAD', { cwd: installDir, encoding: 'utf-8', timeout: 5000 }).trim();
-            const remoteHash = execSync('git rev-parse origin/main', { cwd: installDir, encoding: 'utf-8', timeout: 5000 }).trim();
-            
+            const update = fastForwardNodeUpdate(installDir, 'main');
+            const { previousHash: localHash, updatedHash: remoteHash } = update;
             if (localHash === remoteHash) return; // Already up to date
-
-            // Only ever fast-forward. If origin/main is NOT a descendant of local HEAD
-            // (e.g. local has commits origin doesn't have yet -- a real scenario if a
-            // developer is working directly in this install directory, as happened live:
-            // this exact check-and-update loop once reset a locally-ahead HEAD back to an
-            // older origin/main, silently discarding in-progress local commits, and was
-            // only saved by an unrelated build failure triggering the rollback path below),
-            // do not touch the working tree at all.
-            try {
-                execSync(`git merge-base --is-ancestor ${localHash} ${remoteHash}`, { cwd: installDir, timeout: 5000 });
-            } catch {
-                logActivity(`Skipping update: local (${localHash.slice(0,8)}) is ahead of origin/main (${remoteHash.slice(0,8)})`, 'info');
-                return;
-            }
 
             // ── STEP 1: Snapshot current state for rollback ────────────
             const snapshotRef = localHash;
             logActivity(`Update available: ${localHash.slice(0,8)} → ${remoteHash.slice(0,8)}`, 'info');
             console.log(`  🔄 Update: ${localHash.slice(0,8)} → ${remoteHash.slice(0,8)}`);
             
-            // Stash any local changes
-            try { execSync('git stash --quiet 2>/dev/null', { cwd: installDir, timeout: 10000 }); } catch {}
-
-            // ── STEP 2: Pull new code ──────────────────────────────────
-            execSync('git reset --hard origin/main', { cwd: installDir, timeout: 30000 });
-            
             // ── STEP 3: Install deps + build check ─────────────────────
             try {
-                execSync('npm install --legacy-peer-deps --include=dev --quiet 2>/dev/null', { cwd: installDir, timeout: 180000 });
+                const { execSync } = require('child_process');
+                execSync('npm install --legacy-peer-deps --include=dev --quiet', { cwd: installDir, timeout: 180000 });
 
                 // Build TypeScript → dist/ (required since pm2 runs dist/index.js)
-                execSync('node_modules/.bin/tsc --skipLibCheck 2>/dev/null', { cwd: installDir, timeout: 90000 });
+                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 90000 });
 
                 // Verify entry point was produced
                 const { existsSync: pathExists } = require('fs');
@@ -717,11 +692,17 @@ async function main(): Promise<void> {
                 console.error(`  ❌ Update build FAILED: ${buildErr.message}`);
                 logActivity(`Update FAILED — rolling back to ${snapshotRef.slice(0,8)}`, 'error');
                 
-                execSync(`git reset --hard ${snapshotRef}`, { cwd: installDir, timeout: 15000 });
-                execSync('npm install --legacy-peer-deps --include=dev --quiet 2>/dev/null', { cwd: installDir, timeout: 120000 });
-                
-                console.log(`  🔙 Rolled back to ${snapshotRef.slice(0,8)}. Node continues running.`);
-                logActivity(`Rollback complete. Running on ${snapshotRef.slice(0,8)}`, 'warn');
+                try {
+                    rollbackNodeUpdate(installDir, snapshotRef);
+                    const { execSync } = require('child_process');
+                    execSync('npm install --legacy-peer-deps --include=dev --quiet', { cwd: installDir, timeout: 120000 });
+                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 90000 });
+                    console.log(`  🔙 Rolled back to ${snapshotRef.slice(0,8)}. Node continues running.`);
+                    logActivity(`Rollback complete. Running on ${snapshotRef.slice(0,8)}`, 'warn');
+                } catch (rollbackErr: any) {
+                    console.error(`  ❌ Rollback failed: ${rollbackErr.message}`);
+                    logActivity(`Update rollback FAILED; manual recovery required: ${rollbackErr.message}`, 'error');
+                }
                 
                 // Record failed update
                 try {
@@ -732,7 +713,9 @@ async function main(): Promise<void> {
                 
                 // Do NOT exit — node continues on old version
             }
-        } catch (_e) { /* silent — git may not be available in Docker */ }
+        } catch (e: any) {
+            logActivity(`Automatic update check failed: ${e.message}`, 'warn');
+        }
     };
 
     // Check for updates after 2 min, then every hour

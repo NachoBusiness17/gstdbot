@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { logActivity } from '../gateway/server.js';
 import { platformHealth } from '../lib/platform-health.js';
+import { fastForwardNodeUpdate, rollbackNodeUpdate } from '../lib/node-update.js';
 import type { NodeConfig } from '../index.js';
 import type { NodeWallet } from '../wallet/manager.js';
 import type { CollectiveMemory } from '../memory/collective.js';
@@ -456,59 +457,39 @@ export class SwarmAgent {
 
             logActivity('⬆️ Starting safe auto-update...', 'info');
 
-            // 1. SNAPSHOT — record current state for rollback
-            const snapshot = execSync('git rev-parse HEAD', { cwd: installDir, encoding: 'utf-8', timeout: 5000 }).trim();
-            logActivity(`📸 Snapshot: ${snapshot.slice(0, 12)}`, 'info');
-
-            // Stash any local changes
-            try { execSync('git stash --quiet 2>/dev/null', { cwd: installDir, timeout: 10000 }); } catch (_e) {}
-
-            // 2. PULL — fetch latest code
-            execSync('git fetch origin main --quiet 2>/dev/null', { cwd: installDir, timeout: 30000 });
-            const remote = execSync('git rev-parse origin/main', { cwd: installDir, encoding: 'utf-8', timeout: 5000 }).trim();
-
+            const update = fastForwardNodeUpdate(installDir, 'main');
+            const snapshot = update.previousHash;
+            const remote = update.updatedHash;
             if (snapshot === remote) {
                 logActivity('Already at latest commit — no update needed', 'info');
                 return;
             }
+            logActivity(`📸 Snapshot: ${snapshot.slice(0, 12)}`, 'info');
 
-            // Only reset if local HEAD is genuinely behind origin/main (an ancestor of
-            // it) -- otherwise local has commits origin doesn't have, and resetting
-            // --hard would silently discard them.
+            // Build TypeScript before restart so dist/ always matches the source.
+            let buildError: any;
             try {
-                execSync(`git merge-base --is-ancestor ${snapshot} ${remote}`, { cwd: installDir, timeout: 5000 });
-            } catch {
-                logActivity(`Skipping update: local (${snapshot.slice(0, 8)}) is ahead of origin/main (${remote.slice(0, 8)})`, 'info');
-                return;
-            }
-
-            execSync('git reset --hard origin/main', { cwd: installDir, timeout: 30000 });
-
-            // 3. VERIFY — build check before restart
-            let buildOk = true;
-            try {
-                execSync('npm install --legacy-peer-deps --quiet 2>/dev/null', { cwd: installDir, timeout: 120000 });
-                execSync('./node_modules/.bin/tsc --noEmit --skipLibCheck 2>/dev/null', { cwd: installDir, timeout: 60000 });
-
-                // Verify entry point exists
+                execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                execSync('./node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 90000 });
                 const entryPoint = installDir + '/dist/index.js';
                 if (!fs.existsSync(entryPoint)) {
-                    // Try building
-                    execSync('./node_modules/.bin/tsc --skipLibCheck 2>/dev/null', { cwd: installDir, timeout: 60000 });
-                    if (!fs.existsSync(entryPoint)) {
-                        buildOk = false;
-                    }
+                    throw new Error('Build completed but dist/index.js is missing');
                 }
-            } catch (_e) {
-                buildOk = false;
+            } catch (error: any) {
+                buildError = error;
             }
 
-            if (!buildOk) {
+            if (buildError) {
                 // 4a. ROLLBACK — revert to snapshot
-                logActivity('❌ Update build failed — rolling back to ' + snapshot.slice(0, 12), 'error');
-                execSync(`git reset --hard ${snapshot}`, { cwd: installDir, timeout: 15000 });
-                try { execSync('npm install --legacy-peer-deps --quiet 2>/dev/null', { cwd: installDir, timeout: 120000 }); } catch (_e) {}
-                logActivity('✅ Rollback complete — node continues on previous version', 'success');
+                logActivity(`Update build failed (${buildError.message}) — rolling back to ${snapshot.slice(0, 12)}`, 'error');
+                try {
+                    rollbackNodeUpdate(installDir, snapshot);
+                    execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                    execSync('./node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 90000 });
+                    logActivity('Rollback complete — node continues on previous version', 'success');
+                } catch (rollbackError: any) {
+                    logActivity(`Update rollback failed; manual recovery required: ${rollbackError.message}`, 'error');
+                }
                 return;
             }
 

@@ -5,7 +5,7 @@
 # Usage: bash reinstall.sh [--reset]
 # ═══════════════════════════════════════════════════════
 
-set -e
+set -euo pipefail
 INSTALL_DIR="${GSTD_INSTALL_DIR:-$HOME/gstdbot}"
 CONFIG_DIR="$HOME/.config/gstdbot"
 BACKUP_DIR="$CONFIG_DIR/backup_$(date +%s)"
@@ -15,6 +15,41 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 log() { echo -e "${GREEN}[GSTD]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+safe_update() {
+    local branch="$1"
+    local target_hash
+    if [ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no)" ]; then
+        err "Tracked local changes detected; refusing to overwrite node files"
+    fi
+    git -C "$INSTALL_DIR" fetch --no-tags origin "$branch"
+    if [ "$(git -C "$INSTALL_DIR" rev-parse --is-shallow-repository)" = "true" ]; then
+        git -C "$INSTALL_DIR" fetch --unshallow --no-tags origin "$branch"
+    fi
+    PRE_UPDATE_HASH=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+    target_hash=$(git -C "$INSTALL_DIR" rev-parse FETCH_HEAD)
+    if [ "$PRE_UPDATE_HASH" = "$target_hash" ]; then
+        UPDATED_HASH="$target_hash"
+        return
+    fi
+    if ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$PRE_UPDATE_HASH" "$target_hash"; then
+        err "Local history diverges from origin/$branch; refusing to reset or overwrite it"
+    fi
+    git -C "$INSTALL_DIR" merge --ff-only "$target_hash"
+    UPDATED_HASH="$target_hash"
+}
+
+restore_previous_version() {
+    git reset --merge "$PRE_UPDATE_HASH" || return 1
+    npm install --legacy-peer-deps 2>&1 | tail -3 || return 1
+    ./node_modules/.bin/tsc --skipLibCheck 2>&1 | tail -5 || return 1
+
+    if systemctl list-unit-files gstd-node.service &>/dev/null; then
+        sudo systemctl start gstd-node || return 1
+    else
+        nohup node "$INSTALL_DIR/dist/index.js" > /tmp/gstd-node.log 2>&1 &
+    fi
+}
 
 RESET=false
 [ "$1" = "--reset" ] && RESET=true
@@ -33,17 +68,7 @@ if [ ! -d "$INSTALL_DIR" ]; then
     err "Install directory $INSTALL_DIR not found. Run install.sh first."
 fi
 
-# 1. Stop running node
-log "Stopping running node..."
-if systemctl is-active --quiet gstd-node 2>/dev/null; then
-    sudo systemctl stop gstd-node 2>/dev/null || true
-else
-    pkill -f "node.*dist/index.js" 2>/dev/null || true
-fi
-sleep 2
-log "Node stopped ✓"
-
-# 2. Backup data (unless --reset)
+# 1. Backup data (unless --reset)
 if [ "$RESET" = false ]; then
     log "Backing up data to $BACKUP_DIR..."
     mkdir -p "$BACKUP_DIR"
@@ -69,24 +94,45 @@ else
     log "Config wiped ✓"
 fi
 
-# 3. Update code from GitHub
+# 2. Update code from GitHub
 log "Pulling latest code from GitHub..."
 cd "$INSTALL_DIR"
-git fetch --all 2>/dev/null
 # Detect default branch (main or master)
 DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
 [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH="main"
-git reset --hard "origin/$DEFAULT_BRANCH"
+safe_update "$DEFAULT_BRANCH"
 log "Code updated ✓ (branch: $DEFAULT_BRANCH, commit: $(git rev-parse --short HEAD))"
+
+# 3. Stop running node before replacing installed dependencies/build output
+log "Stopping running node..."
+if systemctl is-active --quiet gstd-node 2>/dev/null; then
+    sudo systemctl stop gstd-node 2>/dev/null || true
+else
+    pkill -f "node.*dist/index.js" 2>/dev/null || true
+fi
+sleep 2
+log "Node stopped ✓"
 
 # 4. Install dependencies
 log "Installing dependencies..."
-npm install --legacy-peer-deps 2>&1 | tail -3
+if ! npm install --legacy-peer-deps 2>&1 | tail -3; then
+    warn "Dependency install failed; restoring and restarting the previous version"
+    if restore_previous_version; then
+        err "Reinstall failed; previous version restored and restarted"
+    fi
+    err "Reinstall and rollback failed; manual recovery is required"
+fi
 log "Dependencies installed ✓"
 
 # 5. Build
 log "Building TypeScript..."
-npx tsc 2>&1 | tail -5
+if ! ./node_modules/.bin/tsc --skipLibCheck 2>&1 | tail -5; then
+    warn "Build failed; restoring and restarting the previous version"
+    if restore_previous_version; then
+        err "Reinstall failed; previous version restored and restarted"
+    fi
+    err "Reinstall and rollback failed; manual recovery is required"
+fi
 log "Build complete ✓"
 
 # 6. Restore data from backup

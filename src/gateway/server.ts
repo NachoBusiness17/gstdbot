@@ -33,6 +33,7 @@ import { ValidatorManager, ChainId } from '../validators/manager.js';
 import { signVerify } from '@ton/crypto';
 import { peerRequestMessage, isStaleTimestamp } from '../p2p/identity.js';
 import { verifyUpdateManifest, isStaleCommand, type UpdateManifest } from '../lib/platform-auth.js';
+import { fastForwardNodeUpdate, rollbackNodeUpdate } from '../lib/node-update.js';
 import { isRegistered } from '../lib/model-registry.js';
 import { demandTracker } from '../lib/demand-tracker.js';
 
@@ -567,56 +568,16 @@ export class OmegaGateway {
 
                 logActivity(`Starting self-update from origin/${branch}...`, 'info');
 
-                // Step 0: Backup config
-                try {
-                    const configDir = require('os').homedir() + '/.config/gstdbot';
-                    const backupDir = configDir + '/backup_' + Date.now();
-                    execSync(`mkdir -p ${backupDir} && cp ${configDir}/wallet.json ${configDir}/earnings.json ${configDir}/dashboard_pin.hash ${backupDir}/ 2>/dev/null || true`, {
-                        encoding: 'utf-8', timeout: 5000,
-                    });
-                } catch (_e) { }
-
-                // Step 1: Force-clean working directory before pull
-                // git reset --hard ensures NO local modifications block the update
-                try {
-                    execSync('git reset --hard HEAD', { cwd: installDir, encoding: 'utf-8', timeout: 10000 });
-                    execSync('git clean -fd 2>/dev/null || true', { cwd: installDir, encoding: 'utf-8', timeout: 10000 });
-                } catch (_e) { }
-
-                // Capture hash before pull so manifest commit-check can rollback to pre-pull state
-                const preUpdateHash = execSync('git rev-parse HEAD', { cwd: installDir, encoding: 'utf-8' }).trim();
-
-                // Step 2: Pull latest
-                let pullOutput = '';
-                try {
-                    pullOutput = execSync(`git pull origin ${branch} --ff-only`, {
-                        cwd: installDir, encoding: 'utf-8', timeout: 30000,
-                    });
-                } catch (_e) {
-                    // ff-only failed -- history has diverged. Only force-reset if local
-                    // HEAD is genuinely behind origin (an ancestor of it); if local has
-                    // its own commits origin doesn't have, resetting --hard would
-                    // silently discard them.
-                    execSync(`git fetch origin ${branch}`, { cwd: installDir, encoding: 'utf-8', timeout: 15000 });
-                    try {
-                        execSync(`git merge-base --is-ancestor HEAD origin/${branch}`, { cwd: installDir, timeout: 5000 });
-                    } catch {
-                        throw new Error(`Local HEAD has diverged from origin/${branch} -- refusing to reset --hard (would discard local commits)`);
-                    }
-                    pullOutput = execSync(`git reset --hard origin/${branch}`, {
-                        cwd: installDir, encoding: 'utf-8', timeout: 10000,
-                    });
-                }
-
-                // Keep track of the original hash so we can rollback
-                const originalHash = execSync('git rev-parse HEAD', { cwd: installDir, encoding: 'utf-8' }).trim();
+                const update = fastForwardNodeUpdate(installDir, branch);
+                const preUpdateHash = update.previousHash;
+                const originalHash = update.updatedHash;
+                const pullOutput = update.output;
 
                 // If a manifest was provided, verify the pulled commit matches exactly
                 if (manifest) {
                     const actualCommit = originalHash; // originalHash is HEAD right after the pull
                     if (actualCommit !== manifest.commit) {
-                        execSync(`git reset --hard ${preUpdateHash}`, { cwd: installDir, encoding: 'utf-8', timeout: 10000 });
-                        execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, encoding: 'utf-8', timeout: 120000 });
+                        rollbackNodeUpdate(installDir, preUpdateHash);
                         throw new Error(
                             `Pulled commit ${actualCommit.slice(0, 8)} does not match manifest ${manifest.commit.slice(0, 8)} — rolled back`,
                         );
@@ -634,12 +595,19 @@ export class OmegaGateway {
                     });
                 } catch (buildError: any) {
                     // Update failed! Rollback to prevent node crash/fail
-                    execSync(`git reset --hard ${originalHash}`, {
-                        cwd: installDir, encoding: 'utf-8', timeout: 10000,
-                    });
-                    execSync('npm install --legacy-peer-deps --include=dev', {
-                        cwd: installDir, encoding: 'utf-8', timeout: 120000,
-                    });
+                    try {
+                        rollbackNodeUpdate(installDir, preUpdateHash);
+                        execSync('npm install --legacy-peer-deps --include=dev', {
+                            cwd: installDir, encoding: 'utf-8', timeout: 120000,
+                        });
+                        execSync('node_modules/.bin/tsc --skipLibCheck', {
+                            cwd: installDir, encoding: 'utf-8', timeout: 120000,
+                        });
+                    } catch (rollbackError: any) {
+                        throw new Error(
+                            `Update validation failed (${buildError.message}) and rollback also failed (${rollbackError.message})`,
+                        );
+                    }
                     throw new Error('Update validation (build) failed. Rollback applied. ' + buildError.message);
                 }
 
@@ -1463,12 +1431,22 @@ export class OmegaGateway {
                     const installDir = process.env.GSTD_INSTALL_DIR || join(require('os').homedir(), 'gstdbot');
                     const branch = getDefaultBranch(installDir);
                     const { execSync } = require('child_process');
-                    execSync(`git fetch origin ${branch} 2>&1`, { cwd: installDir, timeout: 15000 });
-                    const result = execSync(`git log HEAD..origin/${branch} --oneline 2>&1`, { cwd: installDir, timeout: 5000 }).toString();
-                    if (result.trim()) {
-                        await sendReply('📦 Updates available:\\n```\\n' + result.trim() + '\\n```\\nApplying update...');
-                        execSync('git reset --hard HEAD', { cwd: installDir, timeout: 10000 });
-                        execSync(`git pull origin ${branch} --ff-only && npm install --legacy-peer-deps --include=dev && npx tsc`, { cwd: installDir, timeout: 120000 });
+                    const update = fastForwardNodeUpdate(installDir, branch);
+                    if (update.previousHash !== update.updatedHash) {
+                        await sendReply(`📦 Update ${update.previousHash.slice(0, 8)} → ${update.updatedHash.slice(0, 8)}. Applying...`);
+                        try {
+                            execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                        } catch (buildError: any) {
+                            try {
+                                rollbackNodeUpdate(installDir, update.previousHash);
+                                execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                            } catch (rollbackError: any) {
+                                throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
+                            }
+                            throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                        }
                         await sendReply('✅ Updated! Restarting...');
                         setTimeout(() => process.exit(0), 1000);
                     } else {
@@ -1512,17 +1490,34 @@ export class OmegaGateway {
             const branch = getDefaultBranch(installDir);
 
             try {
-                if (component === 'core' || component === 'all') {
-                    execSync('git reset --hard HEAD', { cwd: installDir, timeout: 10000 });
-                    execSync(`cd ${installDir} && git pull origin ${branch} --ff-only && npm install --legacy-peer-deps --include=dev && npx tsc`, { timeout: 120000 });
-                    logActivity('Core updated', 'success');
+                if (!['core', 'apps', 'dashboard', 'all'].includes(component)) {
+                    res.status(400).json({ success: false, error: 'Unknown component' });
+                    return;
+                }
+                if (component === 'core' || component === 'dashboard' || component === 'all') {
+                    const update = fastForwardNodeUpdate(installDir, branch);
+                    if (component === 'core' || component === 'all') {
+                        try {
+                            execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                        } catch (buildError: any) {
+                            try {
+                                rollbackNodeUpdate(installDir, update.previousHash);
+                                execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
+                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                            } catch (rollbackError: any) {
+                                throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
+                            }
+                            throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                        }
+                        logActivity('Core updated', 'success');
+                    }
                 }
                 if (component === 'apps' || component === 'all') {
                     // Pull latest app registry from platform
                     logActivity('App registry refreshed', 'success');
                 }
                 if (component === 'dashboard' || component === 'all') {
-                    execSync(`cd ${installDir} && git checkout origin/${branch} -- web/dashboard.html`, { timeout: 15000 });
                     logActivity('Dashboard updated', 'success');
                 }
                 res.json({ success: true, component, message: `${component} updated successfully` });
@@ -1943,10 +1938,20 @@ export class OmegaGateway {
                     try {
                         const cwd = join(__dirname, '../..');
                         const branch = getDefaultBranch(cwd);
-                        execSync('git reset --hard HEAD', { cwd, encoding: 'utf-8', timeout: 10000 });
-                        execSync(`git pull origin ${branch} --ff-only`, { cwd, encoding: 'utf-8', timeout: 30000 });
-                        execSync('npm install --legacy-peer-deps --include=dev 2>&1 | tail -5 || true', { cwd, encoding: 'utf-8', timeout: 120000 });
-                        execSync('npx tsc 2>&1 | tail -5 || true', { cwd, encoding: 'utf-8', timeout: 60000 });
+                        const update = fastForwardNodeUpdate(cwd, branch);
+                        try {
+                            execSync('npm install --legacy-peer-deps --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
+                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, encoding: 'utf-8', timeout: 60000 });
+                        } catch (buildError: any) {
+                            try {
+                                rollbackNodeUpdate(cwd, update.previousHash);
+                                execSync('npm install --legacy-peer-deps --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
+                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, encoding: 'utf-8', timeout: 60000 });
+                            } catch (rollbackError: any) {
+                                throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
+                            }
+                            throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                        }
                         logActivity('Update complete! Restart to apply.', 'success');
                         res.json({ ok: true, message: 'Updated. Restart to apply changes.' });
                     } catch (e: any) {
@@ -2856,9 +2861,20 @@ export class OmegaGateway {
                     execSync(`cp -r ${join(require('os').homedir(), '.config', 'gstdbot', 'telegram_link.json')} ${backupDir}/ 2>/dev/null || true`, { timeout: 5000 });
                 }
                 // Git pull + rebuild
-                execSync('git fetch --all && git reset --hard origin/main', { cwd, timeout: 30000, stdio: 'pipe' });
-                execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                execSync('npx tsc', { cwd, timeout: 60000, stdio: 'pipe' });
+                const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
+                try {
+                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                } catch (buildError: any) {
+                    try {
+                        rollbackNodeUpdate(cwd, update.previousHash);
+                        execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                        execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    } catch (rollbackError: any) {
+                        throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
+                    }
+                    throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                }
                 // Restore data
                 if (preserveData) {
                     const backupDir = join(require('os').homedir(), '.config', 'gstdbot', 'backup');
@@ -2887,9 +2903,20 @@ export class OmegaGateway {
                 execSync(`rm -rf ${configDir}`, { timeout: 5000 });
                 execSync(`mkdir -p ${configDir}`, { timeout: 5000 });
                 const cwd = join(__dirname, '../..');
-                execSync('git fetch --all && git reset --hard origin/main', { cwd, timeout: 30000, stdio: 'pipe' });
-                execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                execSync('npx tsc', { cwd, timeout: 60000, stdio: 'pipe' });
+                const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
+                try {
+                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                } catch (buildError: any) {
+                    try {
+                        rollbackNodeUpdate(cwd, update.previousHash);
+                        execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                        execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    } catch (rollbackError: any) {
+                        throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
+                    }
+                    throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                }
                 res.json({ success: true, message: 'Full reset complete. Restarting in 3 seconds...' });
                 setTimeout(() => process.exit(0), 3000);
             } catch (e: any) {

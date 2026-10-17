@@ -40,6 +40,43 @@ mark_done()  { echo "$1" >> "$STATE_FILE"; log "DONE: $1"; }
 is_done()    { [ -f "$STATE_FILE" ] && grep -qx "$1" "$STATE_FILE" 2>/dev/null; }
 reset_step() { [ -f "$STATE_FILE" ] && sed -i "/$1/d" "$STATE_FILE" 2>/dev/null; true; }
 
+update_existing_checkout() {
+    local branch="$1"
+    local current_hash target_hash
+
+    if [ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no)" ]; then
+        err "Local tracked changes in $INSTALL_DIR; refusing to overwrite them"
+        return 1
+    fi
+
+    git -C "$INSTALL_DIR" fetch --no-tags --quiet origin "$branch" 2>>"$LOG_FILE" || {
+        err "Failed to fetch updates from origin/$branch"
+        return 1
+    }
+    if [ "$(git -C "$INSTALL_DIR" rev-parse --is-shallow-repository)" = "true" ]; then
+        git -C "$INSTALL_DIR" fetch --unshallow --no-tags --quiet origin "$branch" 2>>"$LOG_FILE" || {
+            err "Failed to verify update history for this shallow checkout"
+            return 1
+        }
+    fi
+
+    current_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+    target_hash=$(git -C "$INSTALL_DIR" rev-parse FETCH_HEAD)
+    if [ "$current_hash" = "$target_hash" ]; then
+        info "Already up to date (${current_hash:0:8})"
+        return 0
+    fi
+    if ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$current_hash" "$target_hash"; then
+        err "Local history diverges from origin/$branch; refusing to reset or overwrite it"
+        return 1
+    fi
+    git -C "$INSTALL_DIR" merge --ff-only "$target_hash" >>"$LOG_FILE" 2>&1 || {
+        err "Fast-forward update failed; existing node files were preserved"
+        return 1
+    }
+    info "Updated to ${target_hash:0:8}"
+}
+
 # ─── Handle flags ────────────────────────────────────────────────
 for arg in "$@"; do
     case "$arg" in
@@ -218,17 +255,11 @@ fi
 # Clone or update
 if [ -d "$INSTALL_DIR/.git" ]; then
     info "Updating existing installation..."
-    cd "$INSTALL_DIR"
-    git fetch --depth 10 origin main 2>>"$LOG_FILE" || true
-    git reset --hard origin/main 2>>"$LOG_FILE" || git pull --ff-only 2>>"$LOG_FILE" || true
-    cd - >/dev/null
-    info "Updated to latest"
+    update_existing_checkout main
 elif [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/package.json" ]; then
-    # Directory exists but no .git — delete and re-clone
-    warn "Corrupted install detected, re-cloning..."
-    rm -rf "$INSTALL_DIR"
-    git clone --depth 10 "$REPO_URL" "$INSTALL_DIR" 2>>"$LOG_FILE"
-    info "Re-cloned fresh"
+    err "Found $INSTALL_DIR without Git metadata; preserving it instead of deleting user data"
+    err "Move or back up this directory manually, then rerun the installer"
+    exit 1
 else
     info "Cloning from GitHub..."
     git clone --depth 10 "$REPO_URL" "$INSTALL_DIR" 2>>"$LOG_FILE"
@@ -245,9 +276,8 @@ cd "$INSTALL_DIR"
 # Always run npm install (fast if nothing changed)
 # --no-audit: suppress vulnerability report (we audit and fix in CI — safe to omit here)
 npm install --no-audit --legacy-peer-deps >>"$LOG_FILE" 2>&1 || npm install --no-audit >>"$LOG_FILE" 2>&1 || {
-    warn "npm install failed, cleaning cache..."
-    rm -rf node_modules package-lock.json
-    npm install --no-audit --legacy-peer-deps >>"$LOG_FILE" 2>&1
+    err "npm install failed; existing dependencies and lockfile were preserved. Check: $LOG_FILE"
+    exit 1
 }
 info "Dependencies ✓"
 
@@ -730,4 +760,3 @@ echo -e "  ${BOLD}Re-run anytime to update:${NC}"
 echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash${NC}"
 echo -e "    ${DIM}Safe to re-run — updates and restarts automatically${NC}"
 echo ""
-
