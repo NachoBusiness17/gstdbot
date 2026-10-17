@@ -279,12 +279,10 @@ export class GstdAiBot {
             }
         });
 
-        // /announce — owner only: broadcast Race to 10 to all D1 users
+        // /announce — owner only: broadcast node invite to all D1 users
         this.bot.command('announce', async (ctx) => {
             if (!this.isAdmin(ctx)) return;
             try {
-                const net = await this.api('/api/v1/network/stats').catch(() => ({}));
-                const slots = (net as any).early_adopter_slots ?? 9;
                 const users = await this.api('/api/v1/telegram/bot/users').catch(() => ({ users: [] }));
                 const ids: number[] = ((users as any).users || []).map((u: any) => u.telegram_id).filter(Boolean);
 
@@ -293,13 +291,9 @@ export class GstdAiBot {
                 }
 
                 const text =
-                    `🚀 <b>GSTD Race to 10 — осталось ${slots} слотов</b>\n\n` +
-                    `Первые 10 нод зарабатывают <b>2× вечно</b>. Нода уже на Pi — нужны ещё.\n\n` +
-                    `⚡ <b>Запуск одной командой:</b>\n` +
-                    `<code>curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash</code>\n\n` +
-                    `💰 100% комиссий → операторам нод. Ранние операторы: двойная ставка.\n` +
-                    `🏆 /leaderboard — посмотри, кто уже зарабатывает\n` +
-                    `⚡ /earn — подробнее`;
+                    `🚀 <b>GSTD: сеть открыта для новых нод</b>\n\n` +
+                    `Запусти ноду и предоставь вычисления AI-сети: /earn — команда с твоим кошельком, /node — статус и награды.` +
+                    `Награды задаёт платформа и зависят от спроса.`;
 
                 let sent = 0, failed = 0;
                 for (const tid of ids) {
@@ -352,7 +346,7 @@ export class GstdAiBot {
             this.bot.api.setMyCommands(
                 [
                     { command: 'admin',    description: '🔐 Admin panel' },
-                    { command: 'announce', description: '📣 Broadcast Race to 10 to all users' },
+                    { command: 'announce', description: '📣 Broadcast node invite to all users' },
                 ],
                 { scope: { type: 'chat', chat_id: this.adminId } }
             ).catch(() => {});
@@ -656,69 +650,41 @@ export class GstdAiBot {
     private async showEarn(ctx: any) {
         const l = lang(ctx);
 
-        // Fetch real network stats + top earner in parallel
         let totalNodes = 0;
-        let earlySlots = 9;
-        let topEarner = '';
-        let topGstd = 0;
         try {
-            const [net, lb] = await Promise.all([
-                this.api('/api/v1/network/stats').catch(() => ({})),
-                this.api('/api/v1/nodes/leaderboard?limit=1').catch(() => ({})),
-            ]);
-            totalNodes  = (net as any).active_workers || (net as any).total_nodes || 0;
-            earlySlots  = (net as any).early_adopter_slots ?? Math.max(0, 10 - totalNodes);
-            const top   = ((lb as any).leaderboard || [])[0];
-            if (top) {
-                topEarner = top.name || top.node_id || '';
-                topGstd   = top.gstd_earned || 0;
-            }
+            const net = await this.api('/api/v1/network/stats').catch(() => ({}));
+            totalNodes = Number((net as any).active_workers ?? (net as any).total_nodes ?? 0) || 0;
         } catch { /* show anyway */ }
 
-        const nodesStr   = totalNodes > 0 ? String(totalNodes) : (l === 'ru' ? 'несколько' : 'several');
-        const INSTALL_CMD = `curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash`;
+        const uid = ctx.from?.id;
+        let wallet = '';
+        try {
+            const w = await this.api(`/api/v1/telegram/bot/wallet?telegram_id=${uid}`);
+            wallet = /^[A-Za-z0-9_-]{40,70}$/.test((w as any).wallet || '') ? (w as any).wallet : '';
+        } catch { /* not linked */ }
 
-        const earlyLine = earlySlots > 0
-            ? (l === 'ru'
-                ? `\n🏁 <b>Race to 10: осталось ${earlySlots} слот${earlySlots === 1 ? '' : earlySlots < 5 ? 'а' : 'ов'} из 10</b> — ранние операторы зарабатывают <b>2×</b> навсегда!`
-                : `\n🏁 <b>Race to 10: ${earlySlots} of 10 slots left</b> — early operators earn <b>2× forever!</b>`)
-            : (l === 'ru' ? '\n✅ Все 10 ранних слотов заняты.' : '\n✅ All 10 early operator slots are taken.');
-
-        const leaderLine = topGstd > 0
-            ? (l === 'ru'
-                ? `\n🏆 Топ нода: <b>${topEarner || '#1'}</b> — заработала <b>${topGstd.toFixed(4)} GSTD</b>`
-                : `\n🏆 Top node: <b>${topEarner || '#1'}</b> — earned <b>${topGstd.toFixed(4)} GSTD</b>`)
-            : '';
+        const nodesStr = String(totalNodes);
+        const installCmd = `curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | GSTD_WALLET_ADDRESS=${wallet || '<YOUR_TON_WALLET>'} bash`;
 
         const msg = l === 'ru'
-            ? `⚡ <b>Запусти ноду — зарабатывай GSTD</b>\n\n` +
-              `Нода принимает AI-запросы из сети и зарабатывает GSTD за каждый ответ.\n` +
-              `<b>100% выплат идёт операторам</b> — платформа не берёт комиссию.\n\n` +
-              `💰 <b>Заработок (по уровням):</b>\n` +
-              `🔵 Облачный режим — <b>0.001–0.005 GSTD/задачу</b>\n` +
-              `🟡 8 ГБ RAM + Ollama — <b>0.005–0.015 GSTD/задачу</b>\n` +
-              `🟢 32 ГБ RAM + Ollama — <b>до 0.015 GSTD/задачу</b>\n` +
-              `<i>Заработок зависит от нагрузки сети.</i>${earlyLine}${leaderLine}\n\n` +
+            ? `⚡ <b>Стань частью сети GSTD</b>\n\n` +
+              `Нода принимает AI-задачи из сети и получает GSTD за выполненные и принятые задачи.\n` +
+              `<i>Размер награды задаёт платформа и зависит от спроса — гарантированных ставок нет.</i>\n\n` +
               `🌐 Нод онлайн: <b>${nodesStr}</b>\n\n` +
-              `<b>⚡ Одна команда — нода запускается автоматически:</b>\n` +
-              `<code>${INSTALL_CMD}</code>\n\n` +
-              `<b>Нужен TON-кошелёк → /wallet</b>`
-            : `⚡ <b>Run a node — earn GSTD</b>\n\n` +
-              `Your node handles AI requests from the network and earns GSTD per response.\n` +
-              `<b>100% of fees go to node operators</b> — no platform cut.\n\n` +
-              `💰 <b>Earnings (by tier):</b>\n` +
-              `🔵 Cloud mode — <b>0.001–0.005 GSTD/task</b>\n` +
-              `🟡 8GB RAM + Ollama — <b>0.005–0.015 GSTD/task</b>\n` +
-              `🟢 32GB RAM + Ollama — <b>up to 0.015 GSTD/task</b>\n` +
-              `<i>Earnings scale with network demand.</i>${earlyLine}${leaderLine}\n\n` +
+              `<b>Запуск одной командой${wallet ? ' (кошелёк уже подставлен)' : ''}:</b>\n` +
+              `<code>${installCmd}</code>\n\n` +
+              (wallet ? `Статус твоей ноды и награды → /node` : `Сначала привяжи TON-кошелёк → /wallet`)
+            : `⚡ <b>Become part of the GSTD network</b>\n\n` +
+              `A node takes AI tasks from the network and earns GSTD for completed, accepted tasks.\n` +
+              `<i>Rewards are set by the platform and depend on demand — there are no guaranteed rates.</i>\n\n` +
               `🌐 Nodes online: <b>${nodesStr}</b>\n\n` +
-              `<b>⚡ One command — node starts automatically:</b>\n` +
-              `<code>${INSTALL_CMD}</code>\n\n` +
-              `<b>A TON wallet is required → /wallet</b>`;
+              `<b>One-command start${wallet ? ' (your wallet is filled in)' : ''}:</b>\n` +
+              `<code>${installCmd}</code>\n\n` +
+              (wallet ? `Your node status and rewards → /node` : `Link your TON wallet first → /wallet`);
 
         const shareText = l === 'ru'
-            ? `🏁 GSTD Race to 10: ${earlySlots > 0 ? `осталось ${earlySlots} слот${earlySlots === 1 ? '' : earlySlots < 5 ? 'а' : 'ов'} из 10` : 'слоты заканчиваются'}!\n\nПервые 10 нод зарабатывают 2× вечно — ранний оператор получает вдвое больше за каждую AI-задачу.\n\n⚡ Запуск одной командой:\ncurl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash\n\n@gstdaibot`
-            : `🏁 GSTD Race to 10: ${earlySlots > 0 ? `${earlySlots} of 10 slots left` : 'slots filling up'}!\n\nFirst 10 nodes earn 2× forever — early operators get double fees on every AI task.\n\n⚡ One command to launch:\ncurl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash\n\n@gstdaibot`;
+            ? `Запусти ноду GSTD и предоставь вычисления для AI-сети.\n\nhttps://t.me/gstdaibot`
+            : `Run a GSTD node and contribute compute to the AI network.\n\nhttps://t.me/gstdaibot`;
         const shareUrl = `https://t.me/share/url?url=https%3A%2F%2Ft.me%2Fgstdaibot&text=${encodeURIComponent(shareText)}`;
 
         await ctx.reply(msg, {
@@ -727,10 +693,10 @@ export class GstdAiBot {
                 inline_keyboard: [
                     [{ text: l === 'ru' ? '🚀 Инструкция (TMA)' : '🚀 Setup guide (TMA)', web_app: { url: `${TMA_URL}?lang=${l}` } }],
                     [
-                        { text: l === 'ru' ? '🏆 Лидерборд' : '🏆 Leaderboard', callback_data: 'leaderboard_menu' },
+                        { text: l === 'ru' ? '🖥 Моя нода' : '🖥 My node', callback_data: 'node_menu' },
                         { text: l === 'ru' ? '🔗 Привязать кошелёк' : '🔗 Link wallet', callback_data: 'wallet_menu' },
                     ],
-                    [{ text: l === 'ru' ? '📣 Поделиться (Race to 10)' : '📣 Share (Race to 10)', url: shareUrl }],
+                    [{ text: l === 'ru' ? '📣 Поделиться' : '📣 Share', url: shareUrl }],
                 ],
             },
         });
@@ -830,13 +796,15 @@ export class GstdAiBot {
     private async showNodeStatus(ctx: any) {
         const l   = lang(ctx);
         const uid = ctx.from?.id;
-        let walletAddress = '';
+        let data: any;
         try {
-            const w = await this.api(`/api/v1/telegram/bot/wallet?telegram_id=${uid}`);
-            walletAddress = (w as any).wallet || '';
-        } catch { /* no wallet */ }
+            data = await this.api(`/api/v1/telegram/bot/nodes?telegram_id=${encodeURIComponent(String(uid))}`);
+        } catch (err: any) {
+            console.error('[gstdaibot] node status:', err.message);
+            return ctx.reply(l === 'ru' ? '❌ Не удалось получить статус.' : '❌ Failed to get status.');
+        }
 
-        if (!walletAddress) {
+        if (!data.linked) {
             return ctx.reply(
                 l === 'ru'
                     ? `🖥 <b>Статус ноды</b>\n\nСначала привяжи TON-кошелёк → /wallet`
@@ -845,94 +813,48 @@ export class GstdAiBot {
             );
         }
 
-        try {
-            const [nodesResp, net] = await Promise.all([
-                this.api(`/api/v1/nodes?wallet=${encodeURIComponent(walletAddress)}`).catch(() => ({ nodes: [] })),
-                this.api('/api/v1/network/stats').catch(() => ({})),
-            ]);
-            const nodeList = (nodesResp as any).nodes || [];
+        const w: string = data.wallet || '';
+        const short = `${w.slice(0, 6)}...${w.slice(-4)}`;
+        const nodes: any[] = Array.isArray(data.nodes) ? data.nodes : [];
+        const pending = Number(data.pending_gstd) || 0;
 
-            if (!nodeList.length) {
-                return ctx.reply(
-                    l === 'ru'
-                        ? `🖥 <b>Нода не найдена</b>\n\n` +
-                          `Кошелёк в боте: <code>${walletAddress.slice(0,6)}...${walletAddress.slice(-4)}</code>\n\n` +
-                          `<i>Убедись, что в файле .env ноды переменная <code>GSTD_WALLET_ADDRESS</code> совпадает с кошельком выше. Разные адреса — нода не привяжется к аккаунту.</i>\n\n` +
-                          `Ещё нет ноды? → /earn`
-                        : `🖥 <b>Node not found</b>\n\n` +
-                          `Bot wallet: <code>${walletAddress.slice(0,6)}...${walletAddress.slice(-4)}</code>\n\n` +
-                          `<i>Make sure your node's <code>GSTD_WALLET_ADDRESS</code> in .env matches the wallet above. Different addresses = node won't link to your account.</i>\n\n` +
-                          `No node yet? → /earn`,
-                    {
-                        parse_mode:   'HTML',
-                        reply_markup: { inline_keyboard: [[{ text: l === 'ru' ? '🚀 Запустить ноду' : '🚀 Launch node', web_app: { url: TMA_URL } }]] },
-                    }
-                );
-            }
-
-            const node    = nodeList[0];
-            const lastSeenMs = node.last_seen ? node.last_seen * 1000 : 0;
-            const online  = lastSeenMs ? Date.now() - lastSeenMs < 15 * 60 * 1000 : false;
-            const tasks   = (node.tasks_completed || 0).toLocaleString();
-            const earned  = typeof node.gstd_earned === 'number' ? node.gstd_earned.toFixed(4) : '0.0000';
-            const since   = lastSeenMs ? new Date(lastSeenMs).toLocaleTimeString(l === 'ru' ? 'ru-RU' : 'en-US') : '?';
-            const rep     = node.reputation_score || 0;
-            const avgMs   = node.avg_response_ms  || 0;
-            const isEarly = node.early_adopter === 1 || node.early_adopter === true;
-
-            // Fetch detailed earnings (USD value, 24h rate)
-            const earnings: any = await this.api(`/api/v1/nodes/${node.node_id}/earnings`).catch(() => ({}));
-            const usdTotal = earnings.usd_earned_total != null ? `≈ $${earnings.usd_earned_total.toFixed(4)}` : '';
-            const earned24h = earnings.gstd_earned_24h != null ? `${earnings.gstd_earned_24h.toFixed(4)} GSTD` : null;
-            const perHour   = earnings.gstd_per_hour != null && earnings.gstd_per_hour > 0
-                ? `${earnings.gstd_per_hour.toFixed(4)} GSTD/h` : null;
-
-            const uptimeRate = isEarly ? 0.1 : 0.05; // GSTD/hour
-            const uptimeDay  = (uptimeRate * 24).toFixed(2);
-            const earlyLine = isEarly
-                ? (l === 'ru' ? `🌟 <b>Ранний оператор — 2× навсегда!</b>\n` : `🌟 <b>Early Operator — 2× forever!</b>\n`)
-                : '';
-
-            const msg = l === 'ru'
-                ? `🖥 <b>Твоя нода</b>\n\n` +
-                  earlyLine +
-                  `${online ? '🟢' : '🔴'} Статус: <b>${online ? 'Online' : 'Offline'}</b>\n` +
-                  `📦 Версия: <b>${node.version || '?'}</b>\n` +
-                  `⭐ Репутация: <b>${rep}/100</b>${avgMs ? ` (${avgMs}мс)` : ''}\n` +
-                  `⚡ Задач: <b>${tasks}</b>${earned24h ? ` · За 24ч: <b>${earned24h}</b>` : ''}\n` +
-                  `💰 Заработано: <b>${earned} GSTD</b>${usdTotal ? ` <i>${usdTotal}</i>` : ''}${isEarly ? ' <i>(2×)</i>' : ''}\n` +
-                  (perHour ? `📈 Темп: <b>${perHour}</b>\n` : '') +
-                  `🕐 Последний раз: <b>${since}</b>\n` +
-                  `⏱ Аптайм-ставка: <b>${uptimeRate} GSTD/ч</b> → ~<b>${uptimeDay} GSTD/день</b>\n\n` +
-                  `Нод в сети: <b>${(net as any).active_workers ?? '?'}</b>\n` +
-                  `<i>Чем выше репутация — тем больше задач роутится на твою ноду.</i>`
-                : `🖥 <b>Your node</b>\n\n` +
-                  earlyLine +
-                  `${online ? '🟢' : '🔴'} Status: <b>${online ? 'Online' : 'Offline'}</b>\n` +
-                  `📦 Version: <b>${node.version || '?'}</b>\n` +
-                  `⭐ Reputation: <b>${rep}/100</b>${avgMs ? ` (${avgMs}ms)` : ''}\n` +
-                  `⚡ Tasks: <b>${tasks}</b>${earned24h ? ` · 24h: <b>${earned24h}</b>` : ''}\n` +
-                  `💰 Earned: <b>${earned} GSTD</b>${usdTotal ? ` <i>${usdTotal}</i>` : ''}${isEarly ? ' <i>(2×)</i>' : ''}\n` +
-                  (perHour ? `📈 Rate: <b>${perHour}</b>\n` : '') +
-                  `🕐 Last seen: <b>${since}</b>\n` +
-                  `⏱ Uptime rate: <b>${uptimeRate} GSTD/h</b> → ~<b>${uptimeDay} GSTD/day</b>\n\n` +
-                  `Nodes online: <b>${(net as any).active_workers ?? '?'}</b>\n` +
-                  `<i>Higher reputation = more tasks routed to your node.</i>`;
-
-            const claimBtn = node.gstd_earned >= 0.01
-                ? [{ text: l === 'ru' ? '💸 Вывести GSTD' : '💸 Withdraw GSTD', callback_data: 'claim_gstd' }]
-                : [];
-            await ctx.reply(msg, {
-                parse_mode:   'HTML',
-                reply_markup: { inline_keyboard: [
-                    [{ text: l === 'ru' ? '🔄 Обновить' : '🔄 Refresh', callback_data: 'node_refresh' }],
-                    ...(claimBtn.length ? [claimBtn] : []),
-                ]},
-            });
-        } catch (err: any) {
-            console.error('[gstdaibot] node status:', err.message);
-            await ctx.reply(l === 'ru' ? '❌ Не удалось получить статус.' : '❌ Failed to get status.');
+        if (!nodes.length) {
+            return ctx.reply(
+                l === 'ru'
+                    ? `🖥 <b>Нода не найдена</b>\n\nКошелёк: <code>${short}</code>\n\n` +
+                      `<i>Проверь, что <code>GSTD_WALLET_ADDRESS</code> в .env ноды совпадает с этим кошельком.</i>\n\n` +
+                      `Ещё нет ноды? → /earn`
+                    : `🖥 <b>Node not found</b>\n\nWallet: <code>${short}</code>\n\n` +
+                      `<i>Make sure <code>GSTD_WALLET_ADDRESS</code> in your node's .env matches this wallet.</i>\n\n` +
+                      `No node yet? → /earn`,
+                {
+                    parse_mode:   'HTML',
+                    reply_markup: { inline_keyboard: [[{ text: l === 'ru' ? '🚀 Запустить ноду' : '🚀 Launch node', web_app: { url: TMA_URL } }]] },
+                }
+            );
         }
+
+        const esc = (s: unknown) => String(s ?? '?').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+        const lines = nodes.slice(0, 5).map(n => {
+            const tasks  = Number(n.tasks_completed) || 0;
+            const earned = Number(n.gstd_earned) || 0;
+            const seen   = n.last_seen ? new Date(Number(n.last_seen) < 1e12 ? Number(n.last_seen) * 1000 : Number(n.last_seen)).toLocaleString(l === 'ru' ? 'ru-RU' : 'en-US') : '?';
+            return l === 'ru'
+                ? `${n.online ? '🟢' : '🔴'} <b>${esc(n.name || n.node_id)}</b> v${esc(n.version)}\n   задач: ${tasks} · заработано: ${earned.toFixed(4)} GSTD\n   последний раз: ${esc(seen)}`
+                : `${n.online ? '🟢' : '🔴'} <b>${esc(n.name || n.node_id)}</b> v${esc(n.version)}\n   tasks: ${tasks} · earned: ${earned.toFixed(4)} GSTD\n   last seen: ${esc(seen)}`;
+        }).join('\n\n');
+
+        const msg = l === 'ru'
+            ? `🖥 <b>Твои ноды</b> (${nodes.length})\n\n${lines}\n\n💰 К выводу: <b>${pending.toFixed(4)} GSTD</b>`
+            : `🖥 <b>Your nodes</b> (${nodes.length})\n\n${lines}\n\n💰 Claimable: <b>${pending.toFixed(4)} GSTD</b>`;
+
+        await ctx.reply(msg, {
+            parse_mode:   'HTML',
+            reply_markup: { inline_keyboard: [
+                [{ text: l === 'ru' ? '🔄 Обновить' : '🔄 Refresh', callback_data: 'node_refresh' }],
+                ...(pending >= 0.01 ? [[{ text: l === 'ru' ? '💸 Забрать GSTD' : '💸 Claim GSTD', callback_data: 'claim_gstd' }]] : []),
+            ]},
+        });
     }
 
     // ── GSTD Uptime Claim ─────────────────────────────────────────────────────
