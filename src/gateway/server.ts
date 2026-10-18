@@ -2016,10 +2016,17 @@ export class OmegaGateway {
             // See /api/update for the full commit-match + rollback path.
             try {
                 const cwd = join(__dirname, '../..');
-                const branch = getDefaultBranch(cwd);
-                execSync(`git pull origin ${branch} --ff-only`, { cwd, encoding: 'utf-8', timeout: 30000 });
-                execSync('npm install --legacy-peer-deps --include=dev 2>&1 | tail -5 || true', { cwd, encoding: 'utf-8', timeout: 120000 });
-                execSync('node_modules/.bin/tsc --skipLibCheck 2>&1 | tail -5 || true', { cwd, encoding: 'utf-8', timeout: 60000 });
+                const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
+                try {
+                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                } catch (buildError: any) {
+                    // Never restart into a half-built node: restore the previous commit and rebuild it.
+                    rollbackNodeUpdate(cwd, update.previousHash);
+                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
+                }
                 logActivity('Update complete — restarting to apply.', 'success');
                 res.json({ ok: true, message: 'Update applied. Restarting now…' });
                 setTimeout(() => process.exit(0), 1000);
