@@ -13,7 +13,7 @@
 **File:** `src/swarm/agent.ts:407`, `src/swarm/agent.ts:530-563`  
 **File:** `src/naas/uptime_daemon.ts:239`, `src/naas/uptime_daemon.ts:305`
 
-**Problem:** Both `SwarmAgent` and `UptimeDaemon` receive commands from `platform.gstdtoken.com` and execute them (`restart`, `stop`, `update`, `health_check`). The commands are authenticated only by HTTPS transport — there is no node-local Ed25519 signature verification on the command payload.
+**Problem:** Both `SwarmAgent` and `UptimeDaemon` receive commands from `app.gstdtoken.com` and execute them (`restart`, `stop`, `update`, `health_check`). The commands are authenticated only by HTTPS transport — there is no node-local Ed25519 signature verification on the command payload.
 
 `platform-auth.ts` exists and verifies signed commands but is only wired into the gateway update endpoint (`/api/update`), not into the heartbeat command loop.
 

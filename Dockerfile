@@ -53,7 +53,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # ─── Labels ──────────────────────────────────────────
 LABEL org.opencontainers.image.title="GSTD Node OS"
 LABEL org.opencontainers.image.description="Sovereign AI Node — earn GSTD by processing AI queries"
-LABEL org.opencontainers.image.url="https://gstdbot.gstdtoken-site.workers.dev"
+LABEL org.opencontainers.image.url="https://app.gstdtoken.com"
 LABEL org.opencontainers.image.source="https://github.com/gstdcoin/gstdbot"
 LABEL org.opencontainers.image.version="3.5.0"
 LABEL org.opencontainers.image.vendor="GSTD"

@@ -49,7 +49,7 @@ function getConfig(): any {
     if (fs.existsSync(configPath)) {
         return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     }
-    return { agent: { model: 'auto' }, swarm: { ollama_url: 'https://platform.gstdtoken.com' } };
+    return { agent: { model: 'auto' }, swarm: { ollama_url: 'https://app.gstdtoken.com' } };
 }
 
 /** Resolve swarm URL in priority: config → env → GSTD platform (cloud mode) */
@@ -57,7 +57,7 @@ function resolveSwarmUrl(config: any): string {
     return config.swarm?.ollama_url
         || process.env.GSTD_SWARM_URL
         || process.env.OLLAMA_URL
-        || 'https://platform.gstdtoken.com';
+        || 'https://app.gstdtoken.com';
 }
 
 function createAgent(): Agent {
@@ -273,7 +273,7 @@ program
         if (!fs.existsSync(configPath)) {
             fs.writeFileSync(configPath, JSON.stringify({
                 agent: { model: 'auto', sovereignty: 'full' },
-                swarm: { enabled: true, contribute: true, ollama_url: 'https://platform.gstdtoken.com' },
+                swarm: { enabled: true, contribute: true, ollama_url: 'https://app.gstdtoken.com' },
                 channels: { telegram: { enabled: false, bot_token: '' } },
                 gateway: { port: 18789, api_port: 8080 },
             }, null, 2));

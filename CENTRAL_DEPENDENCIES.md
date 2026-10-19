@@ -1,6 +1,6 @@
 # GSTD — Central Platform Dependencies
 **Date:** 2026-08-28  
-**Target:** platform.gstdtoken.com → OPTIONAL by Phase 4
+**Target:** app.gstdtoken.com → OPTIONAL by Phase 4
 
 Classification:
 - **CRITICAL** — node cannot function without this call
@@ -25,7 +25,7 @@ Classification:
 ## CRITICAL — Remove from Critical Path in Phase 4
 
 ### 1. `src/core/platform-link.ts` — heartbeat + command polling
-**Role:** The node continuously heartbeats to platform.gstdtoken.com and polls for platform commands (update, restart, etc.)  
+**Role:** The node continuously heartbeats to app.gstdtoken.com and polls for platform commands (update, restart, etc.)  
 **Impact if offline:** Node still runs but loses ability to receive platform-signed commands. Already has 402/500 error handling.  
 **Phase 4 action:** Feature-flag with `GSTD_PLATFORM_ENABLED=false`; commands must be receivable via P2P instead.
 

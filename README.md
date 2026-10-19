@@ -7,14 +7,14 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-Claude%20Code-7c3aed)](https://github.com/gstdcoin/gstdbot/tree/main/mcp)
-[![GSTD Network](https://platform.gstdtoken.com/badge.svg)](https://gstdtoken.com)
+[![GSTD Network](https://app.gstdtoken.com/badge.svg)](https://gstdtoken.com)
 
 ## ⚡ MCP Server for Claude Code
 
 Run Llama 3, Mistral, CodeLlama, Qwen, DeepSeek and **50+ open-source models** directly from Claude Code — free, no API key.
 
 ```bash
-claude mcp add --transport http gstd https://platform.gstdtoken.com/mcp
+claude mcp add --transport http gstd https://app.gstdtoken.com/mcp
 ```
 
 → [Full MCP documentation](https://github.com/gstdcoin/gstdbot/tree/main/mcp)
@@ -217,7 +217,7 @@ is unrelated to peer discovery and still runs through the platform as
 described.
 
 ```
-                    platform.gstdtoken.com  (Cloudflare Worker + KV)
+                    app.gstdtoken.com  (Cloudflare Worker + KV)
                     ┌───────────────────────────────────────┐
                     │ Node Registry (KV) -- P2P last resort │
                     │ Priority Task Queue (KV per node)     │

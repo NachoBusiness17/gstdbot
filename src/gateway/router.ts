@@ -6,7 +6,7 @@
  *
  * Tier hierarchy:
  *  L1  Cache        — instant, no network call
- *  L2  GSTD Network — routes to best available node via platform.gstdtoken.com
+ *  L2  GSTD Network — routes to best available node via app.gstdtoken.com
  *  L3  Fallback msg — tell user to retry (network starting up)
  */
 

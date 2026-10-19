@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
  * GSTD Network MCP Server
- * Hosted endpoint: https://platform.gstdtoken.com/mcp
+ * Hosted endpoint: https://app.gstdtoken.com/mcp
  *
  * Install via Claude Code:
- *   claude mcp add --transport http gstd https://platform.gstdtoken.com/mcp
+ *   claude mcp add --transport http gstd https://app.gstdtoken.com/mcp
  */
 
-const ENDPOINT = 'https://platform.gstdtoken.com/mcp';
+const ENDPOINT = 'https://app.gstdtoken.com/mcp';
 
 console.log('GSTD Network MCP Server');
 console.log('');

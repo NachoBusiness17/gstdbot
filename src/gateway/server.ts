@@ -1695,7 +1695,7 @@ export class OmegaGateway {
         // ─── Tasks ───────────────────────────────────────────────
         this.app.get('/api/node/tasks', async (_req, res) => {
             try {
-                const resp = await fetch('https://platform.gstdtoken.com/api/v1/monitor/unified').catch(() => null);
+                const resp = await fetch('https://app.gstdtoken.com/api/v1/monitor/unified').catch(() => null);
                 if (resp?.ok) { const data: any = await resp.json(); res.json({ pending: data.ecosystem?.tasks_pending || 0, completed: data.ecosystem?.tasks_completed || 0, processing: data.ecosystem?.tasks_processing || 0 }); return; }
             } catch (_e) { }
             res.json({ pending: 0, completed: 0, processing: 0 });
@@ -2698,7 +2698,7 @@ export class OmegaGateway {
         // ═══════════════════════════════════════════════════════════
         this.app.get('/api/swarm/network', async (_req, res) => {
             try {
-                const resp = await fetch('https://platform.gstdtoken.com/api/v1/monitor/unified', {
+                const resp = await fetch('https://app.gstdtoken.com/api/v1/monitor/unified', {
                     signal: AbortSignal.timeout(5000)
                 }).catch(() => null);
                 if (resp?.ok) {

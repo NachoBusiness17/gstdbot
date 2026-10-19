@@ -2,14 +2,14 @@
 
 > Run 50+ open-source AI models on a decentralized node network — directly from Claude Code
 
-[![GSTD Network](https://platform.gstdtoken.com/badge.svg)](https://gstdtoken.com)
+[![GSTD Network](https://app.gstdtoken.com/badge.svg)](https://gstdtoken.com)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-7c3aed)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
 
 ## Install (one command, no API key)
 
 ```bash
-claude mcp add --transport http gstd https://platform.gstdtoken.com/mcp
+claude mcp add --transport http gstd https://app.gstdtoken.com/mcp
 ```
 
 ## What you get
@@ -42,13 +42,13 @@ The loop condition should be `i < len(arr)` not `i <= len(arr)`...
 ## Live endpoint
 
 ```
-https://platform.gstdtoken.com/mcp
+https://app.gstdtoken.com/mcp
 ```
 
 Test it right now:
 
 ```bash
-curl -X POST https://platform.gstdtoken.com/mcp \
+curl -X POST https://app.gstdtoken.com/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
@@ -58,7 +58,7 @@ curl -X POST https://platform.gstdtoken.com/mcp \
 Embed live stats in your README:
 
 ```markdown
-[![GSTD Network](https://platform.gstdtoken.com/badge.svg)](https://gstdtoken.com)
+[![GSTD Network](https://app.gstdtoken.com/badge.svg)](https://gstdtoken.com)
 ```
 
 ## Run a node — earn GSTD
@@ -84,5 +84,5 @@ curl -sSL https://app.gstdtoken.com/install.sh | bash
 
 - 🌐 Website: [gstdtoken.com](https://gstdtoken.com)
 - 🤖 Telegram bot: [@gstdaibot](https://t.me/gstdaibot)
-- 📊 Platform dashboard: [platform.gstdtoken.com](https://platform.gstdtoken.com)
+- 📊 Platform dashboard: [app.gstdtoken.com](https://app.gstdtoken.com)
 - 💬 Node software: [gstdcoin/gstdbot](https://github.com/gstdcoin/gstdbot)

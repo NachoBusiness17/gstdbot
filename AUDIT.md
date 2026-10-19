@@ -87,7 +87,7 @@
 ```
 User/Telegram
     ↓
-platform.gstdtoken.com (central KV)
+app.gstdtoken.com (central KV)
     ↓
 core/platform-link.ts ← polls every ~5 min
     ↓
