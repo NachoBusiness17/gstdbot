@@ -67,7 +67,7 @@ Every inference request through this MCP server generates GSTD tokens for node o
 
 ```bash
 # Works on Raspberry Pi 4, Linux, macOS, cloud VM
-curl -sSL https://gstdtoken.com/install.sh | bash
+curl -sSL https://app.gstdtoken.com/install.sh | bash
 ```
 
 **First 10 nodes: permanent 2× earning bonus.**
