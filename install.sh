@@ -498,64 +498,91 @@ sleep 1
 # Bridge Validator — deployed separately (TON mainnet Phase 1.b)
 info "Bridge Validator: available after TON mainnet deployment"
 
-# Try systemd first (Linux only)
+# Try systemd first (Linux only): system unit with root/sudo, otherwise a per-user unit (no root needed)
 USED_SYSTEMD=false
-if command -v systemctl &>/dev/null && [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; then
-    SERVICE_FILE="/etc/systemd/system/gstd-node.service"
-    sudo tee "$SERVICE_FILE" > /dev/null 2>&1 << SVCEOF
-[Unit]
-Description=GSTD Node OS — Sovereign AI Platform
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$(whoami)
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=$(which node) ${INSTALL_DIR}/dist/index.js
-Restart=always
-RestartSec=5
-Environment=NODE_NAME=${NODE_NAME}
-Environment=GSTD_DASHBOARD_PORT=${DASH_PORT}
-Environment=GSTD_NODE_ID=${NODE_ID}
-Environment=NODE_NAME=${NODE_NAME}
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-    # ─── Bridge node service ───
-    BRIDGE_SERVICE_FILE="/etc/systemd/system/gstd-bridge.service"
-    sudo tee "$BRIDGE_SERVICE_FILE" > /dev/null 2>&1 << BRIDGESVCEOF
-[Unit]
-Description=GSTD Bridge Validator Node (TON<->SOL<->XRP)
-After=network.target
-
-[Service]
-Type=simple
-User=$(whoami)
-WorkingDirectory=${CONFIG_DIR}/bridge
-ExecStart=${CONFIG_DIR}/bridge/gstd-bridge
-Restart=always
-RestartSec=5
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=multi-user.target
-BRIDGESVCEOF
-
-    if [ $? -eq 0 ]; then
-        sudo systemctl daemon-reload 2>/dev/null
-        sudo systemctl enable gstd-node gstd-bridge 2>/dev/null
-        sudo systemctl restart gstd-node gstd-bridge 2>/dev/null
-        sleep 3
-        if sudo systemctl is-active --quiet gstd-node 2>/dev/null; then
-            USED_SYSTEMD=true
-            info "Running as systemd service (auto-start on boot)"
-        fi
+SYSTEMD_MODE=""
+if command -v systemctl &>/dev/null; then
+    if [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; then
+        SYSTEMD_MODE="system"
+    elif systemctl --user show-environment &>/dev/null; then
+        SYSTEMD_MODE="user"
     fi
 fi
+if [ "$(id -u)" = "0" ]; then
+    warn "Running as root: the node service will run as root. Re-run as a normal user for a safer setup."
+fi
 
+if [ -n "$SYSTEMD_MODE" ]; then
+    UNIT_TMP="$(mktemp)"
+    {
+        echo "[Unit]"
+        echo "Description=GSTD Node OS - Sovereign AI Platform"
+        echo "After=network-online.target"
+        echo "Wants=network-online.target"
+        echo ""
+        echo "[Service]"
+        echo "Type=simple"
+        [ "$SYSTEMD_MODE" = "system" ] && echo "User=$(whoami)"
+        echo "WorkingDirectory=${INSTALL_DIR}"
+        echo "ExecStart=$(command -v node) ${INSTALL_DIR}/dist/index.js"
+        echo "Restart=always"
+        echo "RestartSec=5"
+        echo "TimeoutStopSec=20"
+        echo "Environment=NODE_NAME=${NODE_NAME}"
+        echo "Environment=GSTD_DASHBOARD_PORT=${DASH_PORT}"
+        echo "Environment=GSTD_NODE_ID=${NODE_ID}"
+        echo "# Keep a Raspberry Pi / small VPS responsive"
+        echo "MemoryMax=768M"
+        echo "CPUQuota=80%"
+        echo "Nice=10"
+        if [ "$SYSTEMD_MODE" = "system" ]; then
+            echo "NoNewPrivileges=true"
+            echo "PrivateTmp=true"
+            echo "ProtectSystem=full"
+        fi
+        echo ""
+        echo "[Install]"
+        if [ "$SYSTEMD_MODE" = "system" ]; then echo "WantedBy=multi-user.target"; else echo "WantedBy=default.target"; fi
+    } > "$UNIT_TMP"
+
+    if [ "$SYSTEMD_MODE" = "system" ]; then
+        sudo install -m 644 "$UNIT_TMP" /etc/systemd/system/gstd-node.service 2>/dev/null && {
+            sudo systemctl daemon-reload 2>/dev/null
+            sudo systemctl enable gstd-node 2>/dev/null
+            sudo systemctl restart gstd-node 2>/dev/null
+        }
+        sleep 3
+        sudo systemctl is-active --quiet gstd-node 2>/dev/null && USED_SYSTEMD=true
+
+        # Bridge validator is optional: only create its unit when the binary exists
+        if [ -x "${CONFIG_DIR}/bridge/gstd-bridge" ]; then
+            BRIDGE_TMP="$(mktemp)"
+            printf '%s\n' "[Unit]" "Description=GSTD Bridge Validator Node (TON<->SOL<->XRP)" "After=network-online.target" "" \
+                "[Service]" "Type=simple" "User=$(whoami)" "WorkingDirectory=${CONFIG_DIR}/bridge" \
+                "ExecStart=${CONFIG_DIR}/bridge/gstd-bridge" "Restart=always" "RestartSec=5" "Environment=RUST_LOG=info" "" \
+                "[Install]" "WantedBy=multi-user.target" > "$BRIDGE_TMP"
+            sudo install -m 644 "$BRIDGE_TMP" /etc/systemd/system/gstd-bridge.service 2>/dev/null && {
+                sudo systemctl daemon-reload 2>/dev/null
+                sudo systemctl enable --now gstd-bridge 2>/dev/null || true
+            }
+            rm -f "$BRIDGE_TMP"
+        fi
+    else
+        mkdir -p "$HOME/.config/systemd/user"
+        install -m 644 "$UNIT_TMP" "$HOME/.config/systemd/user/gstd-node.service"
+        systemctl --user daemon-reload 2>/dev/null
+        systemctl --user enable gstd-node 2>/dev/null
+        systemctl --user restart gstd-node 2>/dev/null
+        # Without linger the user service would stop at logout and not start at boot
+        loginctl enable-linger "$(whoami)" 2>/dev/null || warn "Could not enable linger: run 'sudo loginctl enable-linger $(whoami)' to start the node at boot"
+        sleep 3
+        systemctl --user is-active --quiet gstd-node 2>/dev/null && USED_SYSTEMD=true
+    fi
+    rm -f "$UNIT_TMP"
+    if [ "$USED_SYSTEMD" = true ]; then
+        info "Running as systemd ${SYSTEMD_MODE} service (auto-restart, auto-start on boot)"
+    fi
+fi
 # Fallback: use PM2 for production process management (auto-restart, log rotation)
 if [ "$USED_SYSTEMD" = false ]; then
     # Install PM2 if not present
@@ -641,8 +668,8 @@ fi
 cat > "$CLI_PATH" << CLISCRIPT
 #!/usr/bin/env bash
 INSTALL_DIR="$INSTALL_DIR"
-SYS_CMD="sudo systemctl"
-[ "\$(id -u)" != "0" ] && ! sudo -n true 2>/dev/null && SYS_CMD="systemctl --user"
+SYS_CMD="sudo systemctl"; JOURNAL="sudo journalctl -u gstd-node -f"
+if [ "\$(id -u)" != "0" ] && ! sudo -n true 2>/dev/null; then SYS_CMD="systemctl --user"; JOURNAL="journalctl --user -u gstd-node -f"; fi
 
 case "\$1" in
     update)
@@ -660,7 +687,7 @@ case "\$1" in
         ;;
     restart) \$SYS_CMD restart gstd-node 2>/dev/null || kill \$(cat \$HOME/.config/gstdbot/node.pid) && cd "\$INSTALL_DIR" && node dist/index.js & ;;
     status)  \$SYS_CMD status gstd-node 2>/dev/null ;;
-    logs)    sudo journalctl -u gstd-node -f 2>/dev/null || tail -f \$HOME/.config/gstdbot/node.log ;;
+    logs)    \$JOURNAL 2>/dev/null || tail -f \$HOME/.config/gstdbot/node.log ;;
     *)
         echo "GSTD Node CLI (v${VERSION})"
         echo "Usage: gstd-node {update|rollback|restart|status|logs}"
@@ -727,11 +754,12 @@ fi
 echo ""
 
 if [ "$USED_SYSTEMD" = true ]; then
+    if [ "$SYSTEMD_MODE" = "user" ]; then SC="systemctl --user"; JC="journalctl --user"; else SC="sudo systemctl"; JC="sudo journalctl"; fi
     echo -e "  ${BOLD}Useful commands:${NC}"
-    echo -e "    ${GREEN}status${NC}   sudo systemctl status gstd-node"
-    echo -e "    ${GREEN}restart${NC}  sudo systemctl restart gstd-node"
-    echo -e "    ${GREEN}logs${NC}     sudo journalctl -u gstd-node -f"
-    echo -e "    ${GREEN}stop${NC}     sudo systemctl stop gstd-node"
+    echo -e "    ${GREEN}status${NC}   $SC status gstd-node"
+    echo -e "    ${GREEN}restart${NC}  $SC restart gstd-node"
+    echo -e "    ${GREEN}logs${NC}     $JC -u gstd-node -f"
+    echo -e "    ${GREEN}stop${NC}     $SC stop gstd-node"
 else
     echo -e "  ${BOLD}Useful commands:${NC}"
     echo -e "    ${GREEN}restart${NC}  pm2 restart gstdbot"
