@@ -4,7 +4,7 @@
 
 [![GSTD Network](https://app.gstdtoken.com/badge.svg)](https://gstdtoken.com)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-7c3aed)](https://modelcontextprotocol.io)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
+[![License](https://img.shields.io/badge/License-PolyForm_NC_1.0.0-orange.svg)](../LICENSE)
 
 ## Install (one command, no API key)
 
@@ -78,7 +78,7 @@ curl -sSL https://app.gstdtoken.com/install.sh | bash
 - **Decentralized** — tasks distributed across nodes globally  
 - **Verified** — M5 RE_EXECUTION: every result cross-checked by a second node
 - **Earnable** — operators earn GSTD tokens, withdrawable to TON wallet
-- **Open** — Apache 2.0, all code public
+- **Source-available** — PolyForm Noncommercial 1.0.0, all code public
 
 ## Links
 

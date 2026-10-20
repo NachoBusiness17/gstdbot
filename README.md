@@ -1,10 +1,10 @@
 # GSTD Node OS
 
 > Run a node. Earn tokens. Own the network.  
-> Open-source software that turns any computer into a revenue-generating node in the GSTD decentralized AI + blockchain network.
+> Source-available software that turns any computer into a node in the GSTD decentralized AI + blockchain network. Rewards depend on live network activity.
 
 [![Version](https://img.shields.io/badge/version-3.5.0-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
-[![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-Claude%20Code-7c3aed)](https://github.com/gstdcoin/gstdbot/tree/main/mcp)
 [![GSTD Network](https://app.gstdtoken.com/badge.svg)](https://gstdtoken.com)
@@ -305,7 +305,7 @@ Most DePIN networks do one thing. GSTD nodes do four — simultaneously, from th
 
 ## Contributing
 
-This is an open-source project built by the community for the community. Any contribution helps — code, docs, translations, running a node.
+This is a community-driven, source-available project. Any contribution helps — code, docs, translations, running a node.
 
 1. Fork the repo
 2. Make your changes
@@ -316,4 +316,4 @@ This is an open-source project built by the community for the community. Any con
 
 ## License
 
-Apache 2.0 — use it, modify it, build on it. The only thing we ask is to keep it open.
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), with an additional permission for taking part in the GSTD network (including receiving GSTD rewards). Commercial use by companies needs a separate license. Bundled third-party skills and models keep their own licenses.
