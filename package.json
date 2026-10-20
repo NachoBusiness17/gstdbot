@@ -103,7 +103,7 @@
     "jscodeshift": "^17.3.0",
     "tsx": "^4.15.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.0.0",
+    "vitest": "^4.1.11",
     "wrangler": "^4.127.1"
   }
 }
