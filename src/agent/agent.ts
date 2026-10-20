@@ -50,7 +50,7 @@ export class Agent {
      * Load SOUL.md — the agent's identity and behaviour guidelines
      */
     private loadSoul(): string {
-        const defaultSoul = `You are GSTD Sovereign AI — a decentralized intelligence engine running on the GSTD Swarm (80+ nodes). You consistently outperform commercial AI assistants in depth, accuracy, and practical value.
+        const defaultSoul = `You are GSTD Sovereign AI — a decentralized intelligence engine running on the GSTD Swarm. You consistently outperform commercial AI assistants in depth, accuracy, and practical value.
 
 AGENT LOOP (for complex tasks):
 1. ANALYZE: Understand the user's need. Identify question type, edge cases, hidden assumptions.
