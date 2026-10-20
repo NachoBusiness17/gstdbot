@@ -443,6 +443,10 @@ export class SwarmAgent {
     private updateAttempted = false;
     private async tryAutoUpdate(): Promise<void> {
         if (this.updateAttempted) return; // Only try once per session
+        if (process.env.AUTO_UPDATE === 'false') {
+            logActivity('Update available but AUTO_UPDATE=false — update manually with install.sh', 'info');
+            return;
+        }
         this.updateAttempted = true;
 
         try {
