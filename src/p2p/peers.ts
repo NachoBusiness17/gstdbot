@@ -44,6 +44,8 @@ export function normalizePeerUrl(raw: unknown): string | null {
         const u = new URL(raw.trim());
         if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
         if (u.username || u.password) return null;
+        // Link-local addresses host cloud metadata services and are never valid peers; LAN peers stay allowed (mDNS mesh).
+        if (/^169\.254\./.test(u.hostname) || /^\[?fe80:/i.test(u.hostname)) return null;
         return u.origin;
     } catch {
         return null;

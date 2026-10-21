@@ -11,6 +11,7 @@
  */
 
 import { demandTracker } from '../lib/demand-tracker.js';
+import { stripTags } from '../lib/strip-tags.js';
 
 export type RouteTier = 'cache' | 'gstd' | 'fallback';
 
@@ -451,7 +452,7 @@ export class NeuralRouter {
             const wData: any = await wResp.json();
             if (wData.query?.search?.length) {
                 webData += 'WIKIPEDIA:\n' +
-                    wData.query.search.map((s: any) => s.title + ': ' + s.snippet.replace(/<[^>]+>/g, '').replace(/[<>]/g, '')).join('\n') + '\n\n';
+                    wData.query.search.map((s: any) => s.title + ': ' + stripTags(String(s.snippet))).join('\n') + '\n\n';
             }
         } catch (_e) {}
         try {

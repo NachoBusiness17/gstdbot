@@ -48,7 +48,7 @@ export function normalizeNpmDocument(doc: unknown): { name: string; distTags: Re
 
 export async function fetchNpmVersion(pkg: string, cfg: AdapterConfig, now: number = Date.now()): Promise<DataVersion> {
     const base = cfg.npmRegistry.replace(/\/+$/, '');
-    const url = `${base}/${pkg.replace('/', '%2f')}`;
+    const url = `${base}/${pkg.replace(/\//g, '%2f')}`;
     const content = normalizeNpmDocument(await boundedJson(url, cfg));
     return {
         entity: `npm:${pkg}`,
