@@ -6,6 +6,7 @@
 
 import { Bot, Context, session } from 'grammy';
 import { NeuralRouter } from '../gateway/router.js';
+import { stripTags } from '../lib/strip-tags.js';
 import { createClient, type RedisClientType } from 'redis';
 import crypto from 'crypto';
 import { beginCell, Address } from '@ton/core';
@@ -996,7 +997,7 @@ async function sendHtml(ctx: any, html: string): Promise<void> {
         try {
             await ctx.reply(html, { parse_mode: 'HTML' });
         } catch {
-            await ctx.reply(html.replace(/<[^>]+>/g, '').substring(0, MAX));
+            await ctx.reply(stripTags(html).substring(0, MAX));
         }
         return;
     }

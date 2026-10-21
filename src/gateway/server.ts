@@ -8,6 +8,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import http from 'http';
 import { v4 as uuid } from 'uuid';
 import { NeuralRouter, RouteResult } from './router.js';
@@ -18,7 +19,7 @@ import { join } from 'path';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'crypto';
 import { AppManager } from '../apps/manager.js';
 import { NodeWallet } from '../wallet/manager.js';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { NodeEventBus } from '../core/event-bus.js';
 import { PlatformLink } from '../core/platform-link.js';
 import { platformHealth } from '../lib/platform-health.js';
@@ -463,34 +464,16 @@ export class OmegaGateway {
         });
 
         // ─── Rate Limiting (protects against abuse on hosted nodes) ──
-        const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-        const RATE_LIMIT = 120;      // max requests per window
-        const RATE_WINDOW = 60000;   // 1 minute window
-        this.app.use((req, res, next) => {
-            const ip = req.ip || req.socket.remoteAddress || 'unknown';
-            const now = Date.now();
-            let entry = rateLimitMap.get(ip);
-            if (!entry || now > entry.resetAt) {
-                entry = { count: 0, resetAt: now + RATE_WINDOW };
-                rateLimitMap.set(ip, entry);
-            }
-            entry.count++;
-            res.setHeader('X-RateLimit-Limit', RATE_LIMIT.toString());
-            res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT - entry.count).toString());
-            if (entry.count > RATE_LIMIT) {
-                logActivity(`Rate limited: ${ip} (${entry.count} req/min)`, 'warn');
+        this.app.use(rateLimit({
+            windowMs: 60_000,
+            limit: 120,
+            standardHeaders: false,
+            legacyHeaders: true,
+            handler: (req, res) => {
+                logActivity(`Rate limited: ${req.ip || 'unknown'}`, 'warn');
                 res.status(429).json({ error: 'Too many requests. Try again in 1 minute.' });
-                return;
-            }
-            next();
-        });
-        // Cleanup old rate limit entries every 5 minutes
-        setInterval(() => {
-            const now = Date.now();
-            for (const [ip, entry] of rateLimitMap.entries()) {
-                if (now > entry.resetAt + RATE_WINDOW) rateLimitMap.delete(ip);
-            }
-        }, 5 * 60_000);
+            },
+        }));
 
         // ─── Health ──────────────────────────────────────────────
         this.app.get('/health', (_req, res) => {
@@ -1613,6 +1596,10 @@ export class OmegaGateway {
 
         // ─── Bridge RPC Proxy → localhost:9090 ────────────────
         this.app.use('/api/bridge', async (req, res) => {
+            if (!/^(\/[A-Za-z0-9_-]+)*\/?$/.test(req.path)) {
+                res.status(400).json({ error: 'Invalid bridge path' });
+                return;
+            }
             try {
                 const bridgeUrl = `http://127.0.0.1:9090/api/bridge${req.path}`;
                 const response = await fetch(bridgeUrl, {
@@ -1636,8 +1623,9 @@ export class OmegaGateway {
             const installed = this.appManager.getInstalled();
             const app = installed.find(a => a.manifest.id === appId);
             if (!app || app.status !== 'running') {
-                res.status(404).send(this.appPageShell(appId, '🚫 App Not Running',
-                    `<p>App <b>${appId}</b> is not installed or not running.</p>
+                const safeAppId = String(appId).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
+                res.status(404).send(this.appPageShell(safeAppId, '🚫 App Not Running',
+                    `<p>App <b>${safeAppId}</b> is not installed or not running.</p>
                      <p><a href="/" style="color:var(--accent)">← Back to Dashboard</a></p>`));
                 return;
             }
@@ -2664,19 +2652,30 @@ export class OmegaGateway {
                 res.status(400).json({ error: 'domain and email required' });
                 return;
             }
+            if (typeof domain !== 'string' || !/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain)) {
+                res.status(400).json({ error: 'Invalid domain' });
+                return;
+            }
+            if (typeof email !== 'string' || email.length > 254 || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
+                res.status(400).json({ error: 'Invalid email' });
+                return;
+            }
             const sslDir = join(require('os').homedir(), '.config', 'gstdbot', 'ssl');
             try {
                 if (!existsSync(sslDir)) mkdirSync(sslDir, { recursive: true });
-                // Install certbot if needed, then obtain cert
-                const cmds = [
-                    'which certbot || (sudo apt-get update -qq && sudo apt-get install -y -qq certbot)',
-                    `sudo certbot certonly --standalone --non-interactive --agree-tos -m ${email} -d ${domain} --http-01-port 80`,
-                    `sudo cp /etc/letsencrypt/live/${domain}/fullchain.pem ${sslDir}/`,
-                    `sudo cp /etc/letsencrypt/live/${domain}/privkey.pem ${sslDir}/`,
-                    `sudo chown $(whoami) ${sslDir}/*.pem`,
-                ];
-                for (const cmd of cmds) {
-                    execSync(cmd, { timeout: 120000, stdio: 'pipe' });
+                // Install certbot if needed, then obtain cert. Arguments are passed without a shell.
+                const run = (file: string, args: string[]) => execFileSync(file, args, { timeout: 120000, stdio: 'pipe' });
+                try {
+                    run('which', ['certbot']);
+                } catch {
+                    run('sudo', ['apt-get', 'update', '-qq']);
+                    run('sudo', ['apt-get', 'install', '-y', '-qq', 'certbot']);
+                }
+                run('sudo', ['certbot', 'certonly', '--standalone', '--non-interactive', '--agree-tos', '-m', email, '-d', domain, '--http-01-port', '80']);
+                const owner = require('os').userInfo().username as string;
+                for (const pem of ['fullchain.pem', 'privkey.pem']) {
+                    run('sudo', ['cp', `/etc/letsencrypt/live/${domain}/${pem}`, `${sslDir}/`]);
+                    run('sudo', ['chown', owner, join(sslDir, pem)]);
                 }
                 writeFileSync(join(sslDir, 'domain.txt'), domain);
                 logActivity(`SSL certificate obtained for ${domain}`, 'success');
@@ -3318,7 +3317,7 @@ export class OmegaGateway {
             category: string; reward: number; status: string;
             assignees: string[]; submissions: Array<{ node: string; result: string; submittedAt: number }>;
             createdAt: number; deadline: number; priority: string;
-        }> = {};
+        }> = Object.create(null);
 
         this.app.post('/api/tasks/create', (req, res) => {
             const { address, signature, title, description, category, reward, priority, deadlineHours } = req.body || {};
@@ -3853,7 +3852,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
 
     private getCertExpiry(certPath: string): string | null {
         try {
-            const output = execSync(`openssl x509 -enddate -noout -in ${certPath}`, { encoding: 'utf-8', timeout: 5000 });
+            const output = execFileSync('openssl', ['x509', '-enddate', '-noout', '-in', certPath], { encoding: 'utf-8', timeout: 5000 });
             return output.replace('notAfter=', '').trim();
         } catch (_e) { return null; }
     }

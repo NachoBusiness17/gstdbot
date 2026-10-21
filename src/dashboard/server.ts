@@ -5,6 +5,7 @@
  */
 
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { cpus, totalmem, freemem, hostname, platform, arch, loadavg, uptime as osUptime, networkInterfaces } from 'os';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -119,6 +120,7 @@ const nodeStartedAt = Date.now();
 // ─── Main Server ─────────────────────────────────────────────────
 export async function startDashboard(port: number = 8080, host: string = '0.0.0.0'): Promise<void> {
     const app = express();
+    app.use(rateLimit({ windowMs: 60_000, limit: 600, standardHeaders: true, legacyHeaders: false }));
     app.use(express.json());
 
     // CORS for any local tools
