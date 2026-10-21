@@ -18,6 +18,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { EventEmitter } from 'events';
+import { safeFetch } from '../lib/safe-fetch.js';
 
 const PEER_TTL_MS    = 5 * 60_000;   // peer considered dead after 5 min no heartbeat
 const HEARTBEAT_INTERVAL = 30_000;    // broadcast to all peers every 30s
@@ -397,14 +398,18 @@ export class PeerManager extends EventEmitter {
         const start = Date.now();
         try {
             const payload = this.getSelfPayload();
-            const resp = await fetch(`${base}/api/peers/heartbeat`, {
+            // LAN meshes (mDNS) use private addresses; set GSTD_ALLOW_PRIVATE_PEERS=false for public-only deployments.
+            const resp = await safeFetch(`${base}/api/peers/heartbeat`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload),
-                signal:  AbortSignal.timeout(10_000),
+                timeoutMs: 10_000,
+                maxBytes: 1024 * 1024,
+                allowPrivate: process.env.GSTD_ALLOW_PRIVATE_PEERS !== 'false',
             });
-            if (!resp.ok) return;
-            const data: any = await resp.json().catch(() => ({}));
+            if (resp.status < 200 || resp.status >= 300) return;
+            let data: any = {};
+            try { data = JSON.parse(resp.body.toString('utf-8')); } catch { /* non-JSON reply */ }
             const latency = Date.now() - start;
 
             // The peer may send us peers we don't know about

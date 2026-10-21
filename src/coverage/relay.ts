@@ -15,6 +15,7 @@
 import type { Application, Request, Response } from 'express';
 import { lookup as dnsLookup } from 'dns/promises';
 import { logActivity } from '../gateway/server.js';
+import { safeFetch } from '../lib/safe-fetch.js';
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const REQUEST_TIMEOUT   = 30_000;
@@ -121,7 +122,7 @@ export class TrafficRelay {
                 const body = (req.method !== 'GET' && req.method !== 'HEAD')
                     ? JSON.stringify(req.body) : undefined;
 
-                const upstream = await fetch(targetUrl, {
+                const upstream = await safeFetch(parsed.href, {
                     method:  req.method,
                     headers: {
                         'Content-Type':  'application/json',
@@ -129,17 +130,18 @@ export class TrafficRelay {
                         'X-Forwarded-By': this.nodeId,
                     },
                     body,
-                    signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+                    timeoutMs: REQUEST_TIMEOUT,
+                    maxBytes: 10 * 1024 * 1024,
                 });
 
-                const buf   = Buffer.from(await upstream.arrayBuffer());
+                const buf   = upstream.body;
                 const bytes = buf.length + (body?.length || 0);
                 this.bytesRelayed    += bytes;
                 this.requestsRelayed += 1;
                 this.feeLedger?.chargeRelay(bytes);
 
                 res.status(upstream.status)
-                   .setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json')
+                   .setHeader('Content-Type', upstream.contentType || 'application/json')
                    .setHeader('X-Relay-Node', this.nodeId)
                    .setHeader('X-Bytes-Relayed', bytes.toString())
                    .send(buf);
