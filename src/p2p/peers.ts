@@ -37,6 +37,19 @@ const UNVERIFIED_LATENCY_MS = 9999;
 const PEERS_FILE   = join(process.env.GSTD_CONFIG_DIR || '/home/bot/.config/gstdbot', 'peers.json');
 const TUNNEL_URL_FILE = '/tmp/gstd_tunnel_url.txt';
 
+/** Peer URLs arrive from other peers: accept only credential-free http(s) origins and drop paths/queries. */
+export function normalizePeerUrl(raw: unknown): string | null {
+    if (typeof raw !== 'string' || raw.length > 2048) return null;
+    try {
+        const u = new URL(raw.trim());
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+        if (u.username || u.password) return null;
+        return u.origin;
+    } catch {
+        return null;
+    }
+}
+
 export function resolvePublicUrl(configured: string): string {
     // Prefer tunnel file (updated live by tunnel.sh) over static config
     try {
@@ -377,10 +390,12 @@ export class PeerManager extends EventEmitter {
 
     private async sendHeartbeatTo(url: string): Promise<void> {
         if (!url || url === this.selfInfo.url) return;
+        const base = normalizePeerUrl(url);
+        if (!base) return;
         const start = Date.now();
         try {
             const payload = this.getSelfPayload();
-            const resp = await fetch(`${url.replace(/\/$/, '')}/api/peers/heartbeat`, {
+            const resp = await fetch(`${base}/api/peers/heartbeat`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload),
@@ -393,7 +408,7 @@ export class PeerManager extends EventEmitter {
             // The peer may send us peers we don't know about
             if (data.peers) {
                 for (const p of data.peers) {
-                    if (p.nodeId && p.url && p.nodeId !== this.selfInfo.nodeId && !this.peers.has(p.nodeId)) {
+                    if (p.nodeId && p.url && normalizePeerUrl(p.url) && p.nodeId !== this.selfInfo.nodeId && !this.peers.has(p.nodeId)) {
                         this.peers.set(p.nodeId, this.placeholder(p.url, p.nodeId, p.capabilities));
                     }
                 }

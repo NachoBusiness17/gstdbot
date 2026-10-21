@@ -10,6 +10,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
+import { execFileSync } from 'child_process';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import { logActivity } from '../gateway/server.js';
@@ -1152,7 +1153,34 @@ export class AppManager extends EventEmitter {
         }
     }
 
+    private static readonly SAFE_ID = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+    private static readonly SAFE_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,127}(:[A-Za-z0-9._-]{1,128})?$/;
+    private static readonly SAFE_PORT = /^\d{1,5}:\d{1,5}(\/(tcp|udp))?$/;
+    private static readonly SAFE_VOLUME = /^[A-Za-z0-9_.-]{1,64}:\/[A-Za-z0-9_./-]{0,200}$/;
+    private static readonly SAFE_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
+    /** Resolves an app id to a known registry id and a data directory that stays inside appsDir. */
+    private safeAppId(appId: string): string | null {
+        if (typeof appId !== 'string' || !AppManager.SAFE_ID.test(appId)) return null;
+        const known = BUILTIN_APPS.find(a => a.id === appId);
+        return known ? known.id : null;
+    }
+
+    private runDocker(args: string[], options: { timeout?: number; ignoreErrors?: boolean } = {}): void {
+        try {
+            execFileSync('docker', args, { encoding: 'utf-8', timeout: options.timeout ?? 30_000, stdio: 'pipe' });
+        } catch (e) {
+            if (!options.ignoreErrors) throw e;
+        }
+    }
+
     async install(appId: string): Promise<boolean> {
+        const safeId = this.safeAppId(appId);
+        if (!safeId) {
+            logActivity('Rejected install: invalid or unknown app id', 'error');
+            return false;
+        }
+        appId = safeId;
         if (this.installed.has(appId)) {
             logActivity(`App ${appId} already installed`, 'warn');
             return false;
@@ -1213,22 +1241,22 @@ export class AppManager extends EventEmitter {
         if (manifest.docker) {
             // Check Docker availability
             if (!await this.runStep(appId, stepIdx++, () => {
-                const { execSync } = require('child_process');
-                execSync('docker info', { timeout: 5000, stdio: 'pipe' });
+                this.runDocker(['info'], { timeout: 5000 });
             }, 200)) { installedApp.status = 'error'; this.saveState(); return false; }
 
             // Pull image
             if (!await this.runStep(appId, stepIdx++, () => {
-                const { execSync } = require('child_process');
-                execSync(`docker pull ${manifest.docker!.image}`, { encoding: 'utf-8', timeout: 180_000 });
+                const image = manifest.docker!.image;
+                if (!AppManager.SAFE_IMAGE.test(image)) throw new Error('Invalid docker image reference');
+                this.runDocker(['pull', image], { timeout: 180_000 });
             }, 100)) { installedApp.status = 'error'; this.saveState(); return false; }
 
             // Create volumes
             if (!await this.runStep(appId, stepIdx++, () => {
-                const { execSync } = require('child_process');
                 (manifest.docker!.volumes || []).forEach(v => {
                     const volName = v.split(':')[0];
-                    try { execSync(`docker volume create ${volName}`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' }); } catch (_) {}
+                    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(volName)) return;
+                    this.runDocker(['volume', 'create', volName], { timeout: 10000, ignoreErrors: true });
                 });
             })) { installedApp.status = 'error'; this.saveState(); return false; }
         } else {
@@ -1288,6 +1316,9 @@ export class AppManager extends EventEmitter {
 
     // ─── Uninstall ───────────────────────────────────────────────
     async uninstall(appId: string): Promise<boolean> {
+        const safeId = this.safeAppId(appId);
+        if (!safeId) return false;
+        appId = safeId;
         const app = this.installed.get(appId);
         if (!app) return false;
 
@@ -1301,14 +1332,9 @@ export class AppManager extends EventEmitter {
         }
 
         // Remove docker container/image
-        if (app.manifest.docker) {
-            try {
-                const { execSync } = require('child_process');
-                execSync(`docker rm -f gstd-${appId} 2>/dev/null; docker rmi ${app.manifest.docker.image} 2>/dev/null`, {
-                    encoding: 'utf-8',
-                    timeout: 30_000,
-                });
-            } catch (_e) { }
+        if (app.manifest.docker && AppManager.SAFE_IMAGE.test(app.manifest.docker.image)) {
+            this.runDocker(['rm', '-f', `gstd-${appId}`], { ignoreErrors: true });
+            this.runDocker(['rmi', app.manifest.docker.image], { ignoreErrors: true });
         }
 
         this.installed.delete(appId);
@@ -1319,22 +1345,33 @@ export class AppManager extends EventEmitter {
 
     // ─── Start / Stop ────────────────────────────────────────────
     async start(appId: string): Promise<boolean> {
+        const safeId = this.safeAppId(appId);
+        if (!safeId) return false;
+        appId = safeId;
         const app = this.installed.get(appId);
         if (!app) return false;
 
         if (app.manifest.docker) {
             try {
-                const { execSync } = require('child_process');
                 const m = app.manifest.docker;
-                const ports = m.ports.map(p => `-p ${p}`).join(' ');
-                const volumes = m.volumes.map(v => `-v ${v}`).join(' ');
-                const envs = Object.entries(m.environment || {}).map(([k, v]) => `-e ${k}=${v}`).join(' ');
+                if (!AppManager.SAFE_IMAGE.test(m.image)) throw new Error('Invalid docker image reference');
+                const args = ['run', '-d', '--name', `gstd-${appId}`];
+                for (const p of m.ports) {
+                    if (!AppManager.SAFE_PORT.test(p)) throw new Error('Invalid docker port mapping');
+                    args.push('-p', p);
+                }
+                for (const v of m.volumes) {
+                    if (!AppManager.SAFE_VOLUME.test(v)) throw new Error('Invalid docker volume mapping');
+                    args.push('-v', v);
+                }
+                for (const [k, v] of Object.entries(m.environment || {})) {
+                    if (!AppManager.SAFE_ENV_KEY.test(k)) throw new Error('Invalid docker environment key');
+                    args.push('-e', `${k}=${v}`);
+                }
+                args.push('--restart', 'unless-stopped', m.image);
 
-                execSync(`docker rm -f gstd-${appId} 2>/dev/null || true`, { encoding: 'utf-8' });
-                execSync(
-                    `docker run -d --name gstd-${appId} ${ports} ${volumes} ${envs} --restart unless-stopped ${m.image}`,
-                    { encoding: 'utf-8', timeout: 30_000 }
-                );
+                this.runDocker(['rm', '-f', `gstd-${appId}`], { ignoreErrors: true });
+                this.runDocker(args, { timeout: 30_000 });
 
                 app.status = 'running';
                 app.url = `http://localhost:${app.manifest.port}`;
@@ -1357,14 +1394,14 @@ export class AppManager extends EventEmitter {
     }
 
     async stop(appId: string): Promise<boolean> {
+        const safeId = this.safeAppId(appId);
+        if (!safeId) return false;
+        appId = safeId;
         const app = this.installed.get(appId);
         if (!app) return false;
 
         if (app.manifest.docker) {
-            try {
-                const { execSync } = require('child_process');
-                execSync(`docker stop gstd-${appId} 2>/dev/null || true`, { encoding: 'utf-8' });
-            } catch (_e) { }
+            this.runDocker(['stop', `gstd-${appId}`], { ignoreErrors: true });
         }
 
         app.status = 'stopped';

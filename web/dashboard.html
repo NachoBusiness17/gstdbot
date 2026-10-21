@@ -1054,7 +1054,7 @@ async function uninstallApp(id) {
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────
-function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function trunc(a,h=8,t=6){ if(!a) return '—'; return a.length>h+t+3?a.slice(0,h)+'...'+a.slice(-t):a; }
 function fmt4(n){ return typeof n==='number'?n.toFixed(4):'—'; }
 function fmtMB(mb){ if(mb==null) return '—'; return mb>=1024?`${(mb/1024).toFixed(1)} GB`:`${mb} MB`; }

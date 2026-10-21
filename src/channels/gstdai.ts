@@ -996,7 +996,7 @@ async function sendHtml(ctx: any, html: string): Promise<void> {
         try {
             await ctx.reply(html, { parse_mode: 'HTML' });
         } catch {
-            await ctx.reply(html.replace(/<[^>]+>/g, '').substring(0, MAX));
+            await ctx.reply(html.replace(/<[^>]+>/g, '').replace(/[<>]/g, '').substring(0, MAX));
         }
         return;
     }

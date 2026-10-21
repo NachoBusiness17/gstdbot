@@ -451,7 +451,7 @@ export class NeuralRouter {
             const wData: any = await wResp.json();
             if (wData.query?.search?.length) {
                 webData += 'WIKIPEDIA:\n' +
-                    wData.query.search.map((s: any) => s.title + ': ' + s.snippet.replace(/<[^>]+>/g, '')).join('\n') + '\n\n';
+                    wData.query.search.map((s: any) => s.title + ': ' + s.snippet.replace(/<[^>]+>/g, '').replace(/[<>]/g, '')).join('\n') + '\n\n';
             }
         } catch (_e) {}
         try {

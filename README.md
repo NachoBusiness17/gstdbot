@@ -1,7 +1,7 @@
 # GSTD Node OS
 
-> Run a node. Earn tokens. Own the network.  
-> Source-available software that turns any computer into a node in the GSTD decentralized AI + blockchain network. Rewards depend on live network activity.
+> Source-available node software for the GSTD AI + TON network.  
+> Status: **early-stage / pre-production**. Rewards are not guaranteed and depend on real network activity; there are currently no real payouts from the sovereign core (simulated only).
 
 [![Version](https://img.shields.io/badge/version-3.5.0-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
 [![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
@@ -29,19 +29,26 @@ curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | 
 
 ---
 
-## Why Run a Node?
+## What a node can contribute
 
-| You provide | The network pays you |
+| You provide | Intended compensation (not guaranteed) |
 |---|---|
-| AI inference (served via GSTD network) | GSTD tokens per task |
-| Blockchain node hosting (TON, XRPL, ETH…) | 85% of RPC revenue |
-| Compute for bridge validation | Share of bridge fees |
-| Storage shards | GSTD per GB/month |
-| Uptime (just stay online) | GSTD uptime rewards |
+| AI inference (served via GSTD network) | GSTD per accepted task, when tasks exist |
+| Blockchain node hosting (TON, XRPL, ETH…) | Share of RPC revenue (experimental, behind `GSTD_NAAS_ENABLED`) |
+| Storage shards | Experimental, not production |
+| Independent verification of other nodes' results | Share of the task budget (sovereign core, simulated ledger) |
 
-**The more you contribute, the more you earn. There is no ceiling.**
+Income depends on real demand; there may be no tasks at a given time. Nothing here is an investment offer or a promise of income. The on-chain split in `contracts/SettlementMaster.tact` is 85% workers / 10% treasury / 5% protocol (source-verified; the deployed bytecode and the owner's `UpdateShares` power are not verified here).
 
-No external AI API keys required — all inference is routed through the GSTD node network itself.
+### Sovereign core (new, experimental)
+
+`src/sovereign/` is a self-contained, centrally-independent task/verification/ledger layer: signed envelopes, gossip over direct HTTP between nodes, deterministic accrual accounting, and no calls to any platform, Cloudflare or Telegram endpoint. It is covered by real multi-process tests (`npm run test:sovereign`). See [docs/SOVEREIGN_NETWORK_AUDIT.md](docs/SOVEREIGN_NETWORK_AUDIT.md) for what is and is not proven.
+
+```bash
+npm run sovereign -- --data-dir ./.sov --port 7701 --roles data,verify --peers http://<other-node>:7701
+```
+
+The rest of the node (gateway, swarm agent, dashboard, Telegram) still uses the central platform; see [CENTRAL_DEPENDENCIES.md](CENTRAL_DEPENDENCIES.md).
 
 ---
 
@@ -88,7 +95,7 @@ Nodes discover each other directly via libp2p — mDNS (LAN) and a Kademlia DHT 
 
 ## Hardware Tiers
 
-Node tier is determined by hardware capability (hardware multiplier), not uptime. More powerful hardware unlocks more modules and higher earnings:
+Node tier is determined by hardware capability (hardware multiplier), not uptime. More powerful hardware unlocks more modules. Bonus percentages below are design parameters, not guaranteed earnings:
 
 | Tier | Hardware Multiplier | Max Modules | Earnings Bonus |
 |---|---|---|---|
@@ -266,28 +273,26 @@ Model availability is reported in the node's heartbeat. The platform routes each
 
 ---
 
-## Why GSTD Is Different
+## What is different
 
-Most DePIN networks do one thing. GSTD nodes do four — simultaneously, from the same hardware:
+GSTD combines several node roles in one codebase. Status of each, honestly:
 
-| Feature | GSTD | io.net | Akash | Bittensor | Render |
-|---|---|---|---|---|---|
-| AI inference routing | ✅ ThermalRouter | ✅ | ❌ | ✅ partial | ❌ |
-| Federated fine-tuning | ⏸ Paused pending isolated worker sandboxing | ❌ | ❌ | ❌ | ❌ |
-| Blockchain NaaS | ✅ 5 chains | ❌ | ❌ | ❌ | ❌ |
-| Any hardware (phone/Pi/laptop/server) | ✅ | ❌ | ❌ | ❌ | ❌ GPU only |
-| Node operator revenue share | **90%** | ~70% | ~80% | ~82% | ~80% |
-| One-command install | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Feature | Status |
+|---|---|
+| AI inference routing (ThermalRouter) | Implemented in the legacy gateway; relies on the central platform for discovery/tasks |
+| Sovereign verified-task core | Implemented and multi-process tested locally (`src/sovereign/`); no real payouts |
+| Federated fine-tuning | Paused pending isolated worker sandboxing |
+| Blockchain NaaS | Experimental, behind `GSTD_NAAS_ENABLED` |
+| Any hardware (phone/Pi/laptop/server) | Roles are suggested by hardware; weak devices get verify/relay roles. Not yet validated on real Raspberry Pi hardware |
+| One-command install | `install.sh` |
 
-**Key innovations:**
+**Key components:**
 
-- **ThermalRouter** — routes each inference request using information entropy to the statistically optimal node. Unlike round-robin or latency-only routing, ThermalRouter models the entire swarm's capacity distribution and picks the node that minimizes response entropy. No other DePIN network does this.
+- **ThermalRouter** — routes inference requests by an entropy-based score over node capacity. No benchmark against other networks has been published; no comparative claims are made.
 
-- **MetaCognitive quality gating (research only)** — the distributed fine-tuning marketplace is currently paused. New jobs, gradients, peer registration, and training task dispatch are disabled until isolated worker sandboxing and settlement verification are implemented.
+- **MetaCognitive quality gating (research only)** — the distributed fine-tuning marketplace is paused. New jobs, gradients, peer registration, and training task dispatch are disabled until isolated worker sandboxing and settlement verification are implemented.
 
-- **Federated fine-tuning (planned)** — dataset submissions and training rewards are not currently available. No training jobs are accepted or dispatched.
-
-- **Any hardware** — a Raspberry Pi 4, an old laptop, a phone (via Telegram bot), or a 256-core server. The node detects hardware and activates the matching modules automatically. No minimum GPU requirement.
+- **Any hardware** — hardware is detected and roles/modules are matched to it. A GPU is not required for verification or relay roles.
 
 ---
 

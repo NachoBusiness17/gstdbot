@@ -1,6 +1,11 @@
 # GSTD — Central Platform Dependencies
-**Date:** 2026-08-28  
+**Date:** 2026-08-28 (status note updated after the sovereign-core audit)  
 **Target:** app.gstdtoken.com → OPTIONAL by Phase 4
+
+> **Status (verified against the code):** this file is a **migration plan**, not a description of the current behaviour.
+> - Only `GSTD_NAAS_ENABLED` is implemented (`src/index.ts`, `src/p2p/node.ts`). `GSTD_PLATFORM_ENABLED` and `GSTD_P2P_ROUTING` below are **proposed and not implemented**.
+> - The existing legacy runtime (`platform-link`, `swarm/agent`, dashboard, Telegram) **still depends on the central platform**; the "Files That Can Operate With No Platform" list at the end has **not** been verified by tests.
+> - The only module with a test-proven central-service-free path is `src/sovereign/` (see [docs/SOVEREIGN_NETWORK_AUDIT.md](docs/SOVEREIGN_NETWORK_AUDIT.md)): its multi-process tests run with every platform/API URL pointed at a dead port and a static test forbids any platform/Cloudflare/Telegram reference inside the module.
 
 Classification:
 - **CRITICAL** — node cannot function without this call

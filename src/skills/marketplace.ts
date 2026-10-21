@@ -9,10 +9,25 @@
  * - OpenClaw-compatible format
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, cpSync, copyFileSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+
+const SAFE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function isSafeSkillName(name: string): boolean {
+    return SAFE_SKILL_NAME.test(name) && !name.includes('..');
+}
+
+function isGithubHttpsUrl(url: string): boolean {
+    try {
+        const u = new URL(url);
+        return u.protocol === 'https:' && (u.hostname === 'github.com' || u.hostname === 'www.github.com');
+    } catch {
+        return false;
+    }
+}
 
 export interface Skill {
     name: string;
@@ -176,6 +191,10 @@ export async function importSkill(source: string): Promise<Skill | null> {
 
 async function importFromUrl(url: string): Promise<Skill | null> {
     const name = extractSkillName(url);
+    if (!isSafeSkillName(name)) {
+        console.log('  Rejected skill import: unsafe skill name');
+        return null;
+    }
     const skillDir = join(SKILLS_DIR, name);
 
     if (existsSync(skillDir)) {
@@ -185,7 +204,7 @@ async function importFromUrl(url: string): Promise<Skill | null> {
     mkdirSync(skillDir, { recursive: true });
 
     // If it's a GitHub repo URL
-    if (url.includes('github.com')) {
+    if (isGithubHttpsUrl(url)) {
         const rawUrl = convertToRawUrl(url);
 
         // Try to fetch SKILL.md directly
@@ -214,7 +233,7 @@ async function importFromUrl(url: string): Promise<Skill | null> {
         // Try git clone
         try {
             const cloneUrl = url.replace(/\/tree\/.*/, '.git');
-            execSync(`git clone --depth 1 ${cloneUrl} "${skillDir}" 2>/dev/null`, { timeout: 30000 });
+            execFileSync('git', ['clone', '--depth', '1', '--', cloneUrl, skillDir], { timeout: 30000, stdio: 'ignore' });
             const skillFile = join(skillDir, 'SKILL.md');
             if (existsSync(skillFile)) {
                 const meta = parseSkillMd(readFileSync(skillFile, 'utf-8'));
@@ -263,14 +282,17 @@ async function importFromUrl(url: string): Promise<Skill | null> {
 
 function importFromLocal(path: string): Skill | null {
     const name = basename(path).replace(/\.(md|tar\.gz|zip)$/, '');
+    if (!isSafeSkillName(name)) return null;
     const skillDir = join(SKILLS_DIR, name);
     mkdirSync(skillDir, { recursive: true });
 
-    if (statSync(path).isDirectory()) {
-        execSync(`cp -r "${path}"/* "${skillDir}/" 2>/dev/null`);
-    } else {
-        execSync(`cp "${path}" "${skillDir}/SKILL.md" 2>/dev/null`);
-    }
+    try {
+        if (statSync(path).isDirectory()) {
+            cpSync(path, skillDir, { recursive: true });
+        } else {
+            copyFileSync(path, join(skillDir, 'SKILL.md'));
+        }
+    } catch (_e) { /* copy failed; SKILL.md check below decides the result */ }
 
     const skillFile = join(skillDir, 'SKILL.md');
     if (existsSync(skillFile)) {
