@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { keyPairFromSeed, sign } from '@ton/crypto';
 import { randomBytes, createHash } from 'crypto';
 import {
@@ -121,6 +121,8 @@ describe('verifyUpdateManifest', () => {
 // ─── isStaleCommand ───────────────────────────────────────────────
 
 describe('isStaleCommand', () => {
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-25T00:00:00Z')); });
+    afterEach(() => vi.useRealTimers());
     it('returns false for a fresh timestamp', () => {
         expect(isStaleCommand(Date.now())).toBe(false);
     });

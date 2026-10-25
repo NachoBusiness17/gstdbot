@@ -350,7 +350,7 @@ export class GstdP2PNode extends EventEmitter {
         console.log(`    🌐 P2P Node: ${peerId.slice(0, 16)}...`);
         console.log(`    📡 Listen:   :${this.config.listenPort}/tcp${this.config.httpServer ? ' + WS on gateway port' : ''}`);
         if (wsAddr) {
-            console.log(`    🔌 WS addr:  ${wsAddr}/p2p/${peerId}`);
+            console.log(`    🔌 WS addr:  ${wsAddr}`);
         } else if (addrs.length > 0) {
             console.log(`    📍 Multiaddr: ${addrs[0]}`);
         }

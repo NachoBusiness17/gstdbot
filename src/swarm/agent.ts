@@ -1386,9 +1386,11 @@ export class SwarmAgent {
         // silently dropping the node from the network until a manual restart.
         const isCriticalEndpoint = endpoint === '/nodes/heartbeat' || endpoint === '/nodes/register';
         if (!isCriticalEndpoint && !platformHealth.shouldAttempt()) return null;
-        const url = this.config.swarm.apiUrl + endpoint + (query || '');
+        const legacyPoll = endpoint === '/tasks/poll' && process.env.GSTD_TASK_POLL_METHOD === 'GET';
+        const pollQuery = legacyPoll ? `?node_id=${encodeURIComponent(this.config.nodeId)}` : (query || '');
+        const url = this.config.swarm.apiUrl + endpoint + pollQuery;
         const walletAddr = this.wallet.getAddress() || '';
-        const isGet = method === 'GET' || endpoint.startsWith('/nodes/public');
+        const isGet = legacyPoll || method === 'GET' || endpoint.startsWith('/nodes/public');
         // /nodes/heartbeat and /nodes/register have been observed taking ~18-22s in
         // production (same root cause already fixed in uptime_daemon.ts) -- give them
         // more headroom than the fast, frequently-polled endpoints like /tasks/poll,

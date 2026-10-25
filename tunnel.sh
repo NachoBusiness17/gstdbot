@@ -25,6 +25,7 @@ GSTDAI_DIR="/home/bot/gstdai"
 
 update_github_node_url() {
   local url="$1"
+  [ "${GSTD_PUBLISH_TUNNEL_TO_GITHUB:-false}" = "true" ] || return
   [ -d "$GSTDAI_DIR/.git" ] || return
 
   # Update simple URL file
@@ -63,7 +64,7 @@ while true; do
   log "Starting Cloudflare Tunnel..."
   TMPOUT=$(mktemp)
 
-  "$CF_BIN" tunnel --url "http://localhost:8080" --no-autoupdate \
+  "$CF_BIN" tunnel --url "http://127.0.0.1:${GSTD_DASHBOARD_PORT:-8080}" --no-autoupdate \
     --logfile "$TMPOUT" --loglevel info 2>&1 &
   CF_PID=$!
 
@@ -88,12 +89,14 @@ while true; do
     fi
     log "Updated GSTD_PUBLIC_URL=$TUNNEL_URL in .env"
     # Update GitHub gstdai seed file so other nodes bootstrapping can find this Pi
+    if [ "${GSTD_PUBLISH_TUNNEL_TO_GITHUB:-false}" = "true" ]; then
     SEED_FILE="/home/bot/gstdai/gstd-seed-peers.txt"
     echo "$TUNNEL_URL" > "$SEED_FILE"
     (cd /home/bot/gstdai && git add gstd-seed-peers.txt && \
       git -c user.email="bot@gstdtoken.com" -c user.name="GSTD Pi Node" \
         commit -m "Update seed peer URL: $TUNNEL_URL" --no-gpg-sign && \
       git push origin main 2>&1 | tail -2) 2>/dev/null || true
+    fi
   else
     log "Failed to get Cloudflare tunnel URL — check $TMPOUT"
     cat "$TMPOUT" >> "$LOG"

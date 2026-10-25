@@ -92,7 +92,9 @@ describe('SwarmAgent quorum attestation gaps', () => {
     });
 
     it('advertises only enabled task kinds to the assignment API', async () => {
-        const agent = new SwarmAgent(mockConfig, mockWallet, mockMemory);
+        // This contract check must not depend on the test host's live CPU/RAM load.
+        const config = { ...mockConfig, swarm: { ...mockConfig.swarm, maxCPU: Number.MAX_SAFE_INTEGER, maxRAM: 100 } };
+        const agent = new SwarmAgent(config, mockWallet, mockMemory);
         (agent as any).connected = true;
         vi.spyOn(agent as any, 'getResourceStats').mockReturnValue({});
         const apiCall = vi.spyOn(agent as any, 'apiCall').mockResolvedValue({ task: null });

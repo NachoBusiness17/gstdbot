@@ -75,7 +75,7 @@ function createAgent(): Agent {
 program
     .name('gstdbot')
     .description('GSTD Node — Full platform client — runs on the GSTD Swarm')
-    .version('3.5.0');
+    .version(require('../../package.json').version);
 
 // ─── Default: Interactive Chat ───────────────────────────────────
 program

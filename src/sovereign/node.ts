@@ -470,7 +470,12 @@ export class SovereignNode {
 
     async stop(): Promise<void> {
         if (this.timer) clearInterval(this.timer);
-        await new Promise<void>(resolve => (this.server ? this.server.close(() => resolve()) : resolve()));
-        this.server?.closeAllConnections?.();
+        await new Promise<void>(resolve => {
+            if (!this.server) return resolve();
+            this.server.close(() => resolve());
+            // Peers can keep active requests alive while this node shuts down.
+            // Close sockets before waiting for the close callback.
+            this.server.closeAllConnections();
+        });
     }
 }

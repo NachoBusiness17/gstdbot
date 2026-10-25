@@ -12,6 +12,7 @@ function makePL(): PlatformLink {
 
 afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
 });
 
 describe('PlatformLink._processCommands gate', () => {
@@ -103,6 +104,21 @@ describe('PlatformLink registration retries', () => {
 });
 
 describe('PlatformLink task delivery', () => {
+    it('uses authenticated GET without a body when legacy Worker polling is configured', async () => {
+        vi.stubEnv('GSTD_TASK_POLL_METHOD', 'GET');
+        const pl = makePL();
+        (pl as any).registered = true;
+        (pl as any).nodeId = 'node /?&';
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ task: null }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        await (pl as any).pollAndProcess();
+        const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe('http://localhost:9999/api/v1/tasks/poll?node_id=node%20%2F%3F%26');
+        expect(options.method).toBe('GET');
+        expect(options.body).toBeUndefined();
+        expect(new Headers(options.headers).get('x-wallet-address')).toBe('EQtest');
+    });
+
     it('waits for an in-flight task poll before stopping', async () => {
         const pl = makePL();
         (pl as any).registered = true;

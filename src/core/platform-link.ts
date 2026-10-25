@@ -135,6 +135,7 @@ export class PlatformLink extends EventEmitter {
                     name:         process.env.NODE_NAME || this.nodeId,
                     wallet:       this.walletAddress,
                     public_url:   tunnelUrl,
+                    node_url:     tunnelUrl,
                     capabilities: models,
                     node_version: this.version,
                     node_pubkey:  this.nodePubkey || undefined,
@@ -320,18 +321,24 @@ export class PlatformLink extends EventEmitter {
         if (this.tasksBusy || !this.registered) return;
         this.tasksBusy = true;
         try {
+            // The legacy Worker exposes GET polling; the current app uses POST.
+            // Select explicitly rather than downgrading on auth/server errors.
+            const legacyPoll = process.env.GSTD_TASK_POLL_METHOD === 'GET';
+            const pollUrl = `${this.platformUrl}/api/v1/tasks/poll`
+                + (legacyPoll ? `?node_id=${encodeURIComponent(this.nodeId)}` : '');
             const resp = await fetch(
-                `${this.platformUrl}/api/v1/tasks/poll`,
+                pollUrl,
                 {
-                    method: 'POST',
+                    method: legacyPoll ? 'GET' : 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Wallet-Address': this.walletAddress,
                         ...this.authHeaders(),
                     },
-                    body: JSON.stringify({
+                    body: legacyPoll ? undefined : JSON.stringify({
                         node_id: this.nodeId,
                         capabilities: ['inference', ...(this.capabilitiesProvider?.().models || [])],
+                        supported_task_kinds: ['inference'],
                         resources: {},
                     }),
                     signal: AbortSignal.timeout(25000),

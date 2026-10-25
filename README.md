@@ -3,7 +3,7 @@
 > Source-available node software for the GSTD AI + TON network.  
 > Status: **early-stage / pre-production**. Rewards are not guaranteed and depend on real network activity; there are currently no real payouts from the sovereign core (simulated only).
 
-[![Version](https://img.shields.io/badge/version-3.5.0-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
+[![Version](https://img.shields.io/badge/version-3.5.1-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
 [![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![Website](https://img.shields.io/badge/website-gstdtoken.com-00d2ff)](https://gstdtoken.com)
@@ -24,6 +24,8 @@ Turn a laptop, server or Raspberry Pi into a GSTD node: it registers with the pl
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash
 ```
+
+The local dashboard uses the same origin for its API, including a configured port or HTTPS tunnel. Local code changes are preserved: automatic updates refuse to overwrite modified tracked files.
 
 Then link the same TON wallet in [@gstdaibot](https://t.me/gstdaibot) (`/wallet`) to see your node and claimable rewards there (`/node`).
 
@@ -77,7 +79,7 @@ Your Hardware
 ## What Runs Automatically
 
 ### AI Inference
-Your node sends a heartbeat with its wallet address every 2 minutes and polls `app.gstdtoken.com/api/v1/tasks/poll` every 5 seconds using `POST` with its `X-Wallet-Address` header. When an inference task arrives, the node runs it through local Ollama and submits a non-empty result to `POST /api/v1/tasks/complete`. Failed or empty inference results are not submitted as completed tasks.
+Your node sends a heartbeat with its wallet address every 2 minutes and polls `app.gstdtoken.com/api/v1/tasks/poll` every 5 seconds using `POST` with its `X-Wallet-Address` header and a fresh Ed25519 node signature. When an inference task arrives, the node runs it through local Ollama and submits a non-empty result to `POST /api/v1/tasks/complete`. Failed or empty inference results are not submitted as completed tasks.
 
 All inference is served through the GSTD network — no external AI provider accounts or API keys required.
 

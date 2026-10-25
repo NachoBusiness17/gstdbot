@@ -133,7 +133,7 @@ export interface NodeConfig {
 async function loadConfig(): Promise<NodeConfig> {
     const configPath = join(homedir(), '.config', 'gstdbot', 'config.json');
     const defaults: NodeConfig = {
-        version: '3.5.0',
+        version: require('../package.json').version,
         mode: (process.env.GSTD_MODE as any) || 'cloud',
         nodeId: process.env.GSTD_NODE_ID || `node-${hostname()}`,
         nodeName: process.env.NODE_NAME || `${hostname()}-node`,
@@ -182,6 +182,7 @@ async function loadConfig(): Promise<NodeConfig> {
             }
             const merged = {
                 ...defaults, ...file,
+                version: defaults.version,
                 swarm: { ...defaults.swarm, ...file.swarm, apiUrl },
                 dashboard: { ...defaults.dashboard, ...file.dashboard },
                 memory: { ...defaults.memory, ...file.memory },
@@ -498,10 +499,13 @@ async function main(): Promise<void> {
                 port: actualPort + 1,
             });
             await fastifyGateway.init();
-            if (typeof (fastifyGateway as any).listen === 'function') {
-                await (fastifyGateway as any).listen();
+            if (fastifyGateway.isReady()) {
+                await fastifyGateway.listen();
+                console.log('    ⚡ Fastify engine: initialized (Express compat mode)');
+            } else {
+                fastifyGateway = null;
+                console.log('    HTTP engine: Express (Fastify unavailable)');
             }
-            console.log('    ⚡ Fastify engine: initialized (Express compat mode)');
         } catch (e: any) {
             console.log(`    ⚠ Fastify init skipped: ${e.message} (Express still active)`);
         }
@@ -625,7 +629,7 @@ async function main(): Promise<void> {
         console.log('  🧠 Inference:   ' + (config.models.available.length > 0 ? `✓ ${config.models.available.length} model(s): ${config.models.available.join(', ')}` : 'no models detected — run scripts/pull-models.sh'));
         console.log('  📡 Relay:       ' + (trafficRelay?.isEnabled() ? '✓ VPN/CDN/API proxy' : 'disabled'));
         console.log('  🌐 NaaS RPC:    ' + (naas ? `✓ ${naas.getStatus().active_chains.length} chains active` : 'disabled'));
-        console.log('  🎓 Training:    ' + ((trainer?.getStats()?.activeJobs || 0) > 0 ? 'active' : '✓ ready'));
+        console.log('  🎓 Training:    ' + (trainer ? ((trainer.getStats()?.activeJobs || 0) > 0 ? 'active' : 'idle') : 'disabled'));
         console.log('  ── Infrastructure ───────────────────────────────');
         console.log('  🐝 Swarm:       ' + (swarm?.isConnected() ? '✓ connected' : 'standalone'));
         console.log('  💰 Wallet:      ' + (wallet.getAddress() || 'auto-generated'));
@@ -641,8 +645,8 @@ async function main(): Promise<void> {
             }
         }
         console.log('');
-        console.log('  💡 Serving AI requests earns GSTD automatically!');
-        console.log('     Earnings → GSTD token on TON blockchain (90% of inference fees)');
+        console.log('  Tasks must be completed and accepted before rewards accrue.');
+        console.log('  On-chain settlement is a separate authorized operation.');
         console.log('');
 
         logActivity('GSTD Node OS v' + config.version + ' booted in ' + bootTime + 's', 'success');

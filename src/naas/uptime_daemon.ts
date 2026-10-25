@@ -14,6 +14,7 @@ import { cpus, totalmem, freemem, loadavg } from 'os';
 import { readFileSync, existsSync } from 'fs';
 import { logActivity } from '../gateway/server.js';
 import { platformHealth } from '../lib/platform-health.js';
+import { loadOrCreateAttestorIdentity, signPeerRequest } from '../p2p/identity.js';
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60_000; // Stay well inside the platform's 10-minute node TTL
 const PLATFORM_URL = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
@@ -118,7 +119,7 @@ export class UptimeDaemon {
             const tunnelUrl = this.getTunnelUrl();
             const resp = await fetch(`${PLATFORM_URL}/api/v1/nodes/register`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': this.walletAddress, ...signPeerRequest(loadOrCreateAttestorIdentity(), this.nodeId) },
                 body: JSON.stringify({
                     node_id: this.nodeId,
                     name: process.env.NODE_NAME || this.nodeId,
@@ -126,7 +127,8 @@ export class UptimeDaemon {
                     wallet_address: this.walletAddress,
                     capabilities,
                     public_url: tunnelUrl || '',
-                    version: '3.5.0',
+                    node_url: tunnelUrl || '',
+                    version: require('../../package.json').version,
                 }),
                 signal: AbortSignal.timeout(10000),
             });
@@ -196,7 +198,7 @@ export class UptimeDaemon {
             wallet_address: this.walletAddress,
             timestamp: Date.now(),
             tier: this.classifyTier(cpuInfo.length, totalRam / (1024 ** 3), this.cachedIOPS),
-            version: '3.5.0',
+            version: require('../../package.json').version,
             containers,
             multiaddrs,
             ...(capabilities.length && { capabilities }),
@@ -218,7 +220,7 @@ export class UptimeDaemon {
         try {
             const resp = await fetch(`${PLATFORM_URL}/api/v1/nodes/heartbeat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': this.walletAddress, ...signPeerRequest(loadOrCreateAttestorIdentity(), this.nodeId) },
                 body: JSON.stringify(heartbeat),
                 // Observed live: the platform's heartbeat endpoint took ~18s to respond
                 // (a slow full-keyspace KEYS scan server-side, see kv.ts's kvKeys()) --
