@@ -10,6 +10,7 @@
  *  L3  Fallback msg — tell user to retry (network starting up)
  */
 
+import { createHash } from 'node:crypto';
 import { demandTracker } from '../lib/demand-tracker.js';
 import { stripTags } from '../lib/strip-tags.js';
 
@@ -145,10 +146,14 @@ class ResponseCache {
         this.cache.set(key, { content, model, ts: Date.now() });
     }
 
-    makeKey(messages: ChatMessage[]) {
-        const last = messages.filter(m => m.role === 'user').pop();
-        return (last?.content?.trim().toLowerCase().slice(0, 200)) || '';
+    makeKey(model: string, messages: ChatMessage[], options: InferenceOptions) {
+        return createHash('sha256').update(JSON.stringify({ model, messages, options })).digest('hex');
     }
+}
+
+export interface InferenceOptions {
+    maxTokens?: number;
+    temperature?: number;
 }
 
 export class NeuralRouter {
@@ -161,17 +166,17 @@ export class NeuralRouter {
         this.peerManager = pm;
     }
 
-    async route(requestedModel: string, messages: ChatMessage[], telegramId?: number): Promise<RouteResult> {
-        const result = await this.routeInternal(requestedModel, messages, telegramId);
+    async route(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
+        const result = await this.routeInternal(requestedModel, messages, telegramId, options);
         const isRealSubstitution = requestedModel !== 'auto' && result.model !== requestedModel;
         return isRealSubstitution ? { ...result, requestedModel } : result;
     }
 
-    private async routeInternal(requestedModel: string, messages: ChatMessage[], telegramId?: number): Promise<RouteResult> {
+    private async routeInternal(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
         const start = Date.now();
 
         // ─── L1: Cache ─────────────────────────────────────────────
-        const cacheKey = this.cache.makeKey(messages);
+        const cacheKey = this.cache.makeKey(requestedModel, messages, options);
         const cached = this.cache.get(cacheKey);
         if (cached) {
             return {
@@ -186,7 +191,7 @@ export class NeuralRouter {
 
         // ─── L2: GSTD Task Queue (submit → node processes → poll result → earnings) ─
         try {
-            const result = await this.routeViaTaskQueue(platformUrl, ollamaModel, messages, 120000, telegramId);
+            const result = await this.routeViaTaskQueue(platformUrl, ollamaModel, messages, 90000, telegramId, options);
             if (result) {
                 this.cache.set(cacheKey, result.content, result.model);
                 demandTracker.record(result.model);
@@ -198,7 +203,7 @@ export class NeuralRouter {
 
         // ─── L3: Local Ollama (fallback when no network nodes) ─────
         try {
-            const result = await this.callOllamaLocal(ollamaUrl, ollamaModel, messages, 512);
+            const result = await this.callOllamaLocal(ollamaUrl, ollamaModel, messages, options.maxTokens ?? 512, options.temperature);
             this.cache.set(cacheKey, result.content, result.model);
             demandTracker.record(ollamaModel);
             return { ...result, latencyMs: Date.now() - start };
@@ -244,6 +249,7 @@ export class NeuralRouter {
         messages: ChatMessage[],
         timeoutMs: number,
         telegramId?: number,
+        options: InferenceOptions = {},
     ): Promise<RouteResult | null> {
         // Check if any active node exists first (fast D1 read, no subrequest)
         const statsResp = await fetch(`${platformUrl}/api/v1/network/stats`, {
@@ -258,7 +264,11 @@ export class NeuralRouter {
         const submitResp = await fetch(`${platformUrl}/api/v1/tasks/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt, telegram_id: telegramId || 0 }),
+            body: JSON.stringify({
+                type: 'inference',
+                payload: { model, prompt, max_tokens: options.maxTokens ?? 512,
+                    temperature: options.temperature ?? 0.7, telegram_id: telegramId || 0 },
+            }),
             signal: AbortSignal.timeout(8000),
         });
         if (!submitResp.ok) return null;
@@ -270,36 +280,36 @@ export class NeuralRouter {
         while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 2000));
             try {
-                const pollResp = await fetch(`${platformUrl}/api/v1/tasks/${task_id}`, {
+                const pollResp = await fetch(`${platformUrl}/api/v1/tasks/result?task_id=${encodeURIComponent(task_id)}`, {
                     signal: AbortSignal.timeout(5000),
                 });
                 if (!pollResp.ok) continue;
-                const { task } = await pollResp.json() as any;
-                if (task?.status === 'completed' && task.response) {
+                const result = await pollResp.json() as any;
+                if (result?.ready === true && typeof result.result === 'string' && result.result.trim()) {
                     return {
-                        content: task.response,
-                        model: task.model || model,
+                        content: result.result,
+                        model: result.model || model,
                         tier: 'gstd',
-                        nodeId: task.node_id,
+                        nodeId: result.node_id,
                         latencyMs: 0,
                         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
                     };
                 }
-                if (task?.status === 'failed') return null;
+                if (result?.error) return null;
             } catch { /* retry */ }
         }
         return null;
     }
 
     // ─── Local Ollama call ───────────────────────────────────────
-    private async callOllamaLocal(ollamaUrl: string, model: string, messages: ChatMessage[], maxTokens: number): Promise<RouteResult> {
+    private async callOllamaLocal(ollamaUrl: string, model: string, messages: ChatMessage[], maxTokens: number, temperature?: number): Promise<RouteResult> {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90_000);
         try {
             const resp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages, stream: false, max_tokens: maxTokens, keep_alive: -1 }),
+                body: JSON.stringify({ model, messages, stream: false, max_tokens: maxTokens, keep_alive: -1, ...(temperature === undefined ? {} : { temperature }) }),
                 signal: controller.signal,
             });
             if (!resp.ok) throw new Error(`Ollama ${resp.status}: ${await resp.text()}`);

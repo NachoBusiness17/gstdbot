@@ -841,10 +841,14 @@ export class OmegaGateway {
 
         this.app.post('/v1/chat/completions', async (req, res) => {
             try {
-                const { model, messages, stream = false } = req.body;
+                const { model, messages, stream = false, max_tokens, temperature } = req.body;
+                const inferenceOptions = {
+                    ...(Number.isSafeInteger(max_tokens) && max_tokens > 0 && max_tokens <= 8192 ? { maxTokens: max_tokens } : {}),
+                    ...(typeof temperature === 'number' && Number.isFinite(temperature) && temperature >= 0 && temperature <= 2 ? { temperature } : {}),
+                };
                 this.metrics.totalRequests++;
 
-                const result = await this.router.route(model || 'auto', messages);
+                const result = await this.router.route(model || 'auto', messages, undefined, inferenceOptions);
                 this.updateMetrics(result);
 
                 if (stream) {
