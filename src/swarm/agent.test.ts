@@ -68,6 +68,7 @@ describe('SwarmAgent quorum attestation gaps', () => {
 
     afterEach(() => {
         vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
     });
 
     it('rejects fine-tuning until an OS sandbox is available', async () => {
@@ -89,6 +90,23 @@ describe('SwarmAgent quorum attestation gaps', () => {
                 tx_hash: 'tx-hash',
             },
         })).rejects.toThrow('cryptographic attestation is implemented');
+    });
+
+    it('executes inference prompts and model options nested in the public task payload', async () => {
+        const agent = new SwarmAgent(mockConfig, mockWallet, mockMemory);
+        vi.spyOn(agent as any, 'apiCall').mockResolvedValue({ ok: true });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ models: [{ name: 'llama3.2:3b' }] }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: 'GSTD_OK' } }], model: 'llama3.2:3b' }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await (agent as any).processInference({
+            id: 'payload-task', type: 'inference',
+            payload: { model: 'llama3.2:3b', prompt: 'Reply GSTD_OK', max_tokens: 12, temperature: 0 },
+        });
+        expect(result.response).toBe('GSTD_OK');
+        expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toMatchObject({
+            model: 'llama3.2:3b', messages: [{ role: 'user', content: 'Reply GSTD_OK' }], max_tokens: 12, temperature: 0,
+        });
     });
 
     it('advertises only enabled task kinds to the assignment API', async () => {

@@ -133,7 +133,7 @@ export class SwarmAgent {
             tierIcon: '🥉',
             streakDays: 0,
             bestStreak: 0,
-            effectiveRate: 0.5,
+            effectiveRate: 0,
             nextTier: 'silver',
             nextTierHours: 100,
             tasksByType: {},
@@ -301,7 +301,7 @@ export class SwarmAgent {
             this.stats.tierIcon = SwarmAgent.TIER_ICONS[this.stats.tier] || '🥉';
             this.stats.streakDays = result.streak?.days || 0;
             this.stats.bestStreak = result.streak?.best || 0;
-            this.stats.effectiveRate = result.stats?.effective_rate_per_h || 0.5;
+            this.stats.effectiveRate = result.stats?.effective_rate_per_h ?? 0;
             this.stats.totalEarnedGstd = result.earnings?.total || this.stats.totalEarnedGstd;
 
             if (result.next_tier) {
@@ -1118,10 +1118,10 @@ export class SwarmAgent {
             temperature?: unknown;
         };
         const request = validateInferenceTaskInput({
-            model: task.model || this.config.models.available[0] || 'llama3.2:3b',
-            messages: inferenceTask.messages ?? [{ role: 'user', content: task.prompt }],
+            model: task.payload?.model || task.model || this.config.models.available[0] || 'llama3.2:3b',
+            messages: task.payload?.messages ?? inferenceTask.messages ?? [{ role: 'user', content: task.payload?.prompt ?? task.prompt }],
             max_tokens: inferenceTask.max_tokens ?? task.payload?.max_tokens ?? 2048,
-            temperature: inferenceTask.temperature ?? 0.7,
+            temperature: task.payload?.temperature ?? inferenceTask.temperature ?? 0.7,
         });
         if (!request) {
             throw new Error('Inference task input is invalid or exceeds configured limits');

@@ -122,6 +122,9 @@ export class UptimeDaemon {
                 headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': this.walletAddress, ...signPeerRequest(loadOrCreateAttestorIdentity(), this.nodeId) },
                 body: JSON.stringify({
                     node_id: this.nodeId,
+                    node_pubkey: loadOrCreateAttestorIdentity().pubkeyHex,
+                    node_version: require('../../package.json').version,
+                    specs: { mode: 'node', platform: process.platform, arch: process.arch, version: require('../../package.json').version, capabilities },
                     name: process.env.NODE_NAME || this.nodeId,
                     wallet: this.walletAddress,
                     wallet_address: this.walletAddress,
