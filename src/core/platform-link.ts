@@ -369,10 +369,19 @@ export class PlatformLink extends EventEmitter {
             }
             if (!Array.isArray(messages)) messages = [{ role: 'user', content: prompt }];
 
+            const maxTokens = payload.max_tokens ?? task.max_tokens;
+            const temperature = payload.temperature ?? task.temperature;
+            const inferenceStarted = Date.now();
             const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages, stream: false }),
+                body: JSON.stringify({
+                    model, messages, stream: false,
+                    ...(typeof maxTokens === 'number' && Number.isInteger(maxTokens) && maxTokens > 0
+                        ? { max_tokens: maxTokens } : {}),
+                    ...(typeof temperature === 'number' && Number.isFinite(temperature)
+                        && temperature >= 0 && temperature <= 2 ? { temperature } : {}),
+                }),
                 signal: AbortSignal.timeout(90000),
             });
             if (!aiResp.ok) throw new Error(`Local inference failed: HTTP ${aiResp.status}`);
@@ -389,7 +398,7 @@ export class PlatformLink extends EventEmitter {
                     'X-Wallet-Address': this.walletAddress,
                     ...this.authHeaders(),
                 },
-                body: JSON.stringify({ task_id, node_id: this.nodeId, result: content }),
+                body: JSON.stringify({ task_id, node_id: this.nodeId, result: content, model, latency_ms: Math.max(0, Date.now() - inferenceStarted) }),
                 signal: AbortSignal.timeout(25000),
             });
             if (!completion.ok) throw new Error(`Task completion failed: HTTP ${completion.status}`);

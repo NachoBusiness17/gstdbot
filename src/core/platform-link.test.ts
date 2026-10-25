@@ -155,7 +155,7 @@ describe('PlatformLink task delivery', () => {
                 task: {
                     task_id: 'task-1',
                     type: 'inference',
-                    payload: { model: 'llama3.2:1b', prompt: 'hello' },
+                    payload: { model: 'llama3.2:1b', prompt: 'hello', max_tokens: 12, temperature: 0 },
                 },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -176,6 +176,11 @@ describe('PlatformLink task delivery', () => {
             capabilities: ['inference', 'llama3.2:1b'],
         });
 
+        const [, inferenceOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+        expect(JSON.parse(String(inferenceOptions.body))).toMatchObject({
+            model: 'llama3.2:1b', max_tokens: 12, temperature: 0,
+            messages: [{ role: 'user', content: 'hello' }],
+        });
         const [completionUrl, completionOptions] = fetchMock.mock.calls[2] as [string, RequestInit];
         expect(completionUrl).toBe('http://localhost:9999/api/v1/tasks/complete');
         expect(new Headers(completionOptions.headers).get('x-wallet-address')).toBe('EQtest');
@@ -183,6 +188,8 @@ describe('PlatformLink task delivery', () => {
             task_id: 'task-1',
             node_id: 'test-node-id',
             result: 'hello back',
+            model: 'llama3.2:1b',
+            latency_ms: expect.any(Number),
         });
     });
 
