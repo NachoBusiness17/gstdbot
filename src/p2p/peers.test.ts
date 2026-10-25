@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rmSync } from 'fs';
 import { join } from 'path';
 import { PeerManager } from './peers.js';
+import { safeFetch } from '../lib/safe-fetch.js';
+vi.mock('../lib/safe-fetch.js', () => ({ safeFetch: vi.fn() }));
 
 // PeerManager persists its table to $GSTD_CONFIG_DIR/peers.json and reloads it in
 // its constructor, so without this each test would inherit the previous test's peers.
@@ -147,5 +149,53 @@ describe('PeerManager quality scoring', () => {
         pm.recordOutcome('peer-q', false);
         const best = pm.getBestPeer('llama3.2:3b');
         expect(best?.nodeId).toBe('peer-s');
+    });
+});
+
+
+describe('PeerManager verified discovery', () => {
+    let pm: PeerManager;
+    const fetchPeer = vi.mocked(safeFetch);
+    beforeEach(() => {
+        rmSync(PEERS_FILE, { force: true });
+        fetchPeer.mockReset();
+        pm = new PeerManager({ nodeId: 'self-node', url: 'https://self.example.com', capabilities: ['llama3.2:3b'],
+            version: '3.5.3', cpuCores: 4, ramGb: 8, uptime: 0, tasksHandled: 0, source: 'http-gossip' });
+    });
+    afterEach(() => { pm.stop(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+    it('rejects a second identity at its own current URL', () => {
+        pm.registerPeer('self-alias', pm.getSelfUrl(), []);
+        expect(pm.getAllPeers()).toEqual([]);
+    });
+    it('does not treat an HTTP 200 HTML error page as a live peer', async () => {
+        pm.registerPeer('remote', 'https://remote.example.com', []);
+        fetchPeer.mockResolvedValue({ status: 200, body: Buffer.from('<html>error</html>') } as any);
+        await (pm as any).sendHeartbeatTo('https://remote.example.com');
+        expect(pm.getLivePeers()).toEqual([]);
+    });
+    it('coalesces recursive or overlapping heartbeat calls to the same peer', async () => {
+        pm.registerPeer('remote', 'https://remote.example.com', []);
+        let resolvePing!: (value: any) => void;
+        fetchPeer.mockImplementation(() => new Promise(resolve => { resolvePing = resolve; }));
+        const first = (pm as any).sendHeartbeatTo('https://remote.example.com');
+        const second = (pm as any).sendHeartbeatTo('https://remote.example.com');
+        expect(fetchPeer).toHaveBeenCalledTimes(1);
+        resolvePing({ status: 200, body: Buffer.from(JSON.stringify({ ok: true, node_id: 'remote' })) });
+        await Promise.all([first, second]);
+        expect(pm.getLivePeers().map(p => p.nodeId)).toEqual(['remote']);
+    });
+    it('falls back to the live registry after a configured seed is unreachable', async () => {
+        vi.stubEnv('GSTD_SEED_PEERS', 'https://dead.example.com');
+        vi.stubEnv('GSTD_SWARM_URL', 'https://platform.example.com');
+        vi.stubGlobal('fetch', vi.fn(async (url: any) => String(url).includes('raw.githubusercontent.com')
+            ? new Response('https://dead.example.com')
+            : new Response(JSON.stringify({ nodes: [{ node_id: 'live-node', node_url: 'https://live.example.com' }] }))));
+        fetchPeer.mockImplementation(async (url: any) => {
+            if (String(url).includes('dead.example.com')) throw new Error('unreachable');
+            return { status: 200, body: Buffer.from(JSON.stringify({ ok: true, node_id: 'live-node' })) } as any;
+        });
+        await pm.start();
+        expect(pm.getLivePeers().map(p => p.nodeId)).toEqual(['live-node']);
+        expect(fetch).toHaveBeenCalledWith('https://platform.example.com/api/v1/nodes/list', expect.anything());
     });
 });

@@ -489,8 +489,9 @@ export class OmegaGateway {
                     bruteForceProtection: true,
                 },
                 swarm: {
-                    peers: this.orchestrator?.getPeers()?.length || 0,
-                    models: this.orchestrator?.getAvailableModels()?.length || 0,
+                    peers: this.peerManager?.getLivePeers().length || 0,
+                    models: this._availableModels.length,
+                    catalogModels: this.orchestrator?.getAvailableModels()?.length || 0,
                 },
             });
         });
@@ -676,7 +677,7 @@ export class OmegaGateway {
         this.app.get('/api/peers', (_req, res) => {
             const peers = this.peerManager?.getLivePeers() || [];
             res.json({
-                node_id:      process.env.GSTD_NODE_ID || 'unknown',
+                node_id:      this.nodeId,
                 node_url:     this.peerManager?.getSelfUrl() || process.env.GSTD_PUBLIC_URL || '',
                 capabilities: this._availableModels,
                 storage: this.ipfs?.isEnabled
@@ -705,7 +706,7 @@ export class OmegaGateway {
             const peers = this.peerManager?.getLivePeers() || [];
             res.json({
                 ok: true,
-                node_id: process.env.GSTD_NODE_ID || 'unknown',
+                node_id: this.nodeId,
                 peers: peers.map(p => ({ nodeId: p.nodeId, url: p.url, capabilities: p.capabilities })),
             });
         });
@@ -4656,10 +4657,10 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             logActivity('GSTD_PUBLIC_URL not set — P2P peer discovery disabled. Set it to enable multi-node routing.', 'info');
         }
         this.peerManager = new PeerManager({
-            nodeId:       process.env.GSTD_NODE_ID || `node-${os.hostname()}`,
+            nodeId:       this.nodeId,
             url:          publicUrl,
             capabilities: this._availableModels,
-            version:      '3.5.0',
+            version:      require('../../package.json').version,
             cpuCores:     os.cpus().length,
             ramGb:        Math.round(os.totalmem() / (1024 ** 3)),
             uptime:       process.uptime(),

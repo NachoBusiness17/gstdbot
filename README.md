@@ -3,7 +3,7 @@
 > Source-available node software for the GSTD AI + TON network.  
 > Status: **early-stage / pre-production**. Rewards are not guaranteed and depend on real network activity; there are currently no real payouts from the sovereign core (simulated only).
 
-[![Version](https://img.shields.io/badge/version-3.5.2-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
+[![Version](https://img.shields.io/badge/version-3.5.3-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
 [![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![Website](https://img.shields.io/badge/website-gstdtoken.com-00d2ff)](https://gstdtoken.com)

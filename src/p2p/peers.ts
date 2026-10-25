@@ -110,6 +110,7 @@ export class PeerManager extends EventEmitter {
     private quality = new Map<string, PeerQuality>();
     private selfInfo: Omit<PeerInfo, 'lastSeen' | 'latencyMs'>;
     private heartbeatTimer: NodeJS.Timeout | null = null;
+    private heartbeatInFlight = new Set<string>();
 
     constructor(self: Omit<PeerInfo, 'lastSeen' | 'latencyMs'>) {
         super();
@@ -117,9 +118,17 @@ export class PeerManager extends EventEmitter {
         this.loadFromDisk();
     }
 
+    private isSelfUrl(raw: string): boolean {
+        const url = normalizePeerUrl(raw);
+        return !!url && (url === normalizePeerUrl(this.selfInfo.url) || url === normalizePeerUrl(this.getSelfUrl()));
+    }
+
     // ─── Startup ─────────────────────────────────────────────────────
 
     async start(): Promise<void> {
+        for (const [key, peer] of this.peers) {
+            if (peer.nodeId === this.selfInfo.nodeId || this.isSelfUrl(peer.url)) this.peers.delete(key);
+        }
         // 1. Seed peers from env
         const envSeeds = (process.env.GSTD_SEED_PEERS || '')
             .split(',').map(s => s.trim()).filter(s => s.startsWith('http'));
@@ -139,16 +148,18 @@ export class PeerManager extends EventEmitter {
 
         const allSeeds = [...new Set([...envSeeds, ...githubSeeds])];
         for (const url of allSeeds) {
-            if (url !== this.selfInfo.url) {
+            if (!this.isSelfUrl(url)) {
                 this.peers.set(url, this.placeholder(url));
             }
         }
 
-        // 2.5. Last resort: central registry, ONLY if env + GitHub seeding found nothing.
+        // Probe seeds before deciding whether registry fallback is needed.
+        await this.pingAll();
+        // 2.5. Last resort: central registry if no seed actually answered.
         // This is deliberately the bottom of the fallback chain, not a routine source --
         // logged clearly so an operator can see the network degraded to it.
-        if (allSeeds.length === 0 && this.peers.size === 0) {
-            console.log('[Peers] No env/GitHub seeds found — falling back to central registry (app.gstdtoken.com)');
+        if (this.getLivePeers().length === 0) {
+            console.log('[Peers] No reachable seed peers — falling back to the configured platform registry');
             try {
                 const apiBase = process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com';
                 const resp = await fetch(`${apiBase}/api/v1/nodes/list`, { signal: AbortSignal.timeout(8000) });
@@ -159,7 +170,7 @@ export class PeerManager extends EventEmitter {
                     for (const n of nodes) {
                         const url = n.node_url || n.url;
                         const nodeId = n.node_id || n.id;
-                        if (url && nodeId && url !== this.selfInfo.url && nodeId !== this.selfInfo.nodeId && !this.peers.has(nodeId)) {
+                        if (url && nodeId && !this.isSelfUrl(url) && nodeId !== this.selfInfo.nodeId && !this.peers.has(nodeId)) {
                             this.peers.set(nodeId, { ...this.placeholder(url, nodeId, n.capabilities || []), source: 'kv-fallback' });
                             added++;
                         }
@@ -187,7 +198,7 @@ export class PeerManager extends EventEmitter {
     // ─── Incoming heartbeat (called by server.ts POST /api/peers/heartbeat) ─
 
     receiveHeartbeat(payload: HeartbeatPayload, measuredLatency = 0): void {
-        if (payload.nodeId === this.selfInfo.nodeId) return;
+        if (payload.nodeId === this.selfInfo.nodeId || this.isSelfUrl(payload.url)) return;
 
         const existing = this.peers.get(payload.nodeId);
         const peer: PeerInfo = {
@@ -212,7 +223,7 @@ export class PeerManager extends EventEmitter {
         this.emit('peer:seen', peer);
 
         // Gossip: share our peer table back to this peer
-        this.sendHeartbeatTo(payload.url).catch(() => {});
+        if (!existing || existing.latencyMs >= UNVERIFIED_LATENCY_MS) this.sendHeartbeatTo(payload.url).catch(() => {});
     }
 
     // ─── Register peer via POST /api/peers/register (simple registration) ───
@@ -226,7 +237,7 @@ export class PeerManager extends EventEmitter {
     // casing is a speculative change against an unknown external caller.
 
     registerPeer(nodeId: string, url: string, capabilities: string[], source: PeerSource = 'http-gossip', touch: boolean = true, pubkeyHex?: string): void {
-        if (nodeId === this.selfInfo.nodeId) return;
+        if (nodeId === this.selfInfo.nodeId || this.isSelfUrl(url)) return;
         const existing = this.peers.get(nodeId);
         this.peers.set(nodeId, {
             nodeId, url, capabilities,
@@ -349,7 +360,7 @@ export class PeerManager extends EventEmitter {
 
     getLivePeers(): PeerInfo[] {
         const cutoff = Date.now() - PEER_TTL_MS;
-        return Array.from(this.peers.values()).filter(p => p.lastSeen > cutoff);
+        return Array.from(this.peers.values()).filter(p => p.lastSeen > cutoff && p.latencyMs < UNVERIFIED_LATENCY_MS && p.nodeId !== this.selfInfo.nodeId && !this.isSelfUrl(p.url));
     }
 
     getAllPeers(): PeerInfo[] {
@@ -392,9 +403,10 @@ export class PeerManager extends EventEmitter {
     }
 
     private async sendHeartbeatTo(url: string): Promise<void> {
-        if (!url || url === this.selfInfo.url) return;
+        if (!url || this.isSelfUrl(url)) return;
         const base = normalizePeerUrl(url);
-        if (!base) return;
+        if (!base || this.heartbeatInFlight.has(base)) return;
+        this.heartbeatInFlight.add(base);
         const start = Date.now();
         try {
             const payload = this.getSelfPayload();
@@ -410,12 +422,13 @@ export class PeerManager extends EventEmitter {
             if (resp.status < 200 || resp.status >= 300) return;
             let data: any = {};
             try { data = JSON.parse(resp.body.toString('utf-8')); } catch { /* non-JSON reply */ }
-            const latency = Date.now() - start;
+            if (data.ok !== true || typeof data.node_id !== 'string' || !data.node_id || data.node_id === this.selfInfo.nodeId) return;
+            const latency = Math.max(1, Date.now() - start);
 
             // The peer may send us peers we don't know about
             if (data.peers) {
                 for (const p of data.peers) {
-                    if (p.nodeId && p.url && normalizePeerUrl(p.url) && p.nodeId !== this.selfInfo.nodeId && !this.peers.has(p.nodeId)) {
+                    if (p.nodeId && p.url && normalizePeerUrl(p.url) && p.nodeId !== this.selfInfo.nodeId && !this.isSelfUrl(p.url) && !this.peers.has(p.nodeId)) {
                         this.peers.set(p.nodeId, this.placeholder(p.url, p.nodeId, p.capabilities));
                     }
                 }
@@ -430,6 +443,8 @@ export class PeerManager extends EventEmitter {
             }
         } catch {
             // Peer unreachable — don't remove, just let TTL expire
+        } finally {
+            this.heartbeatInFlight.delete(base);
         }
     }
 
