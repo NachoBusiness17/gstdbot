@@ -1,0 +1,51 @@
+import {it,expect,vi} from 'vitest';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+import {modelCatalog,compatibility,type CatalogHardware} from '../lib/model-catalog.js';
+class Element {
+ value='';textContent='';disabled=false;checked=false;dataset:Record<string,string>={};children:any[]=[];
+ onchange:any;onclick:any;oninput:any;
+ classes=new Set<string>();
+ classList={add:(x:string)=>this.classes.add(x),remove:(x:string)=>this.classes.delete(x),toggle:(x:string,on:boolean)=>on?this.classes.add(x):this.classes.delete(x)};
+ replaceChildren(...items:any[]){this.children=items;}append(...items:any[]){this.children.push(...items);}add(item:any){this.children.push(item);}
+ removeAttribute(){}setAttribute(){}
+}
+function storage(initial:Record<string,string>){const m=new Map(Object.entries(initial));return{getItem:(k:string)=>m.get(k)||null,setItem:(k:string,v:string)=>m.set(k,v),removeItem:(k:string)=>m.delete(k)}}
+it('renders the actual catalog and keeps personal-wallet linking visible on an existing node',async()=>{
+ const html=readFileSync('web/dashboard.html','utf8'),elements=new Map<string,Element>();
+ for(const m of html.matchAll(/id="([^"]+)"/g))elements.set(m[1],new Element());
+ const labels=[...html.matchAll(/data-i="([^"]+)"/g)].map(m=>{const e=new Element();e.dataset.i=m[1];return e;});
+ const h:CatalogHardware={total_ram:8*1024**3,available_ram:6*1024**3,disk_free:20*1024**3,cpu_cores:4,gpu_vram:0,gpu_name:null,local_runtime:true,platform:'linux',arch:'arm64'};
+ const catalog={hardware:h,models:modelCatalog().map(m=>({...m,compatibility:compatibility(m,h)}))};
+ const address='0:'+'77'.repeat(32);
+ let bound:any=null;
+ const fetcher=vi.fn(async(path:string,options:any)=>{
+  if(path==='/api/node/operator')return{ok:true,status:200,json:async()=>({node_id:'fixture-existing',version:'3.7.0',name:'Fixture',uptime:60,cpu:{usage:5,load_1m:.1},ram:{used:1024**3,total:h.total_ram},compute:{active:0,capacity:1},requests:0,platform:{registered:true},payout_address:'0:'+'88'.repeat(32)})};
+  if(path==='/api/ollama/models')return{ok:true,status:200,json:async()=>({ollama_available:true,installed:[{id:'qwen3.5:0.8b',size:100}],running:[]})};
+  if(path==='/api/ollama/catalog')return{ok:true,status:200,json:async()=>catalog};
+  if(path==='/api/node/reward-wallet'){
+   if(options.method==='POST'){bound=JSON.parse(options.body);return{ok:true,status:200,json:async()=>({payout:{address,revision:1}})};}
+   return{ok:true,status:200,json:async()=>({payout:null})};
+  }
+  throw Error('Unexpected UI request '+path);
+ });
+ const context:any={
+  document:{documentElement:{lang:''},hidden:false,title:'',getElementById:(id:string)=>elements.get(id),querySelectorAll:()=>labels,createElement:()=>new Element()},
+  navigator:{language:'ru-RU'},localStorage:storage({}),sessionStorage:storage({gstd_operator_session:'fixture-only'}),
+  Option:class{constructor(public text:string,public value:string){}},fetch:fetcher,
+  setInterval:()=>0,location:{reload(){}},console,TextDecoder,Set,Date,
+ };
+ runInNewContext(html.split('<script>')[1].split('</script>')[0],context);
+ await vi.waitFor(()=>expect(elements.get('installChoice')!.children.length).toBeGreaterThan(10));
+ const choice=elements.get('installChoice')!;
+ choice.value='qwen3.5:27b';choice.onchange();expect(elements.get('install')!.disabled).toBe(true);
+ choice.value='qwen3.5:2b';choice.onchange();expect(elements.get('install')!.disabled).toBe(false);
+ expect(elements.get('walletForm')!.classes.has('hidden')).toBe(false);
+ expect(elements.get('payout')!.textContent).toContain('ещё не привязан');
+ elements.get('walletAddress')!.value=address;elements.get('walletConsent')!.checked=true;
+ elements.get('walletConsent')!.onchange();await elements.get('bind')!.onclick();
+ expect(bound).toEqual({address,revision:0});
+ expect(elements.get('payout')!.textContent).toBe(address);
+ expect(elements.get('identityWallet')!.textContent).toContain('88'.repeat(32));
+ expect(labels.every(e=>e.textContent!==e.dataset.i)).toBe(true);
+});

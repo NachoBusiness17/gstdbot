@@ -126,6 +126,15 @@ export class NodeWallet {
         return this.wallet.address;
     }
 
+    cacheRewardAddress(address:string):void{
+        if(!this.wallet)throw Error('wallet_not_initialized');
+        const {Address}=require('@ton/core');
+        const next={...this.wallet,linkedExternalWallet:Address.parse(address).toRawString()};
+        writeFileSync(this.walletFile,JSON.stringify(next,null,2),{mode:0o600});
+        this.wallet=next;
+    }
+    getRewardAddress():string|null{return this.wallet?.linkedExternalWallet||null;}
+
     getAddress(): string | null {
         return this.wallet?.address || null;
     }

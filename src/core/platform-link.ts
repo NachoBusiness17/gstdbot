@@ -1,3 +1,4 @@
+import {isCloudModel,localModelOptions} from '../lib/local-model-options.js';
 import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
 /**
  * ═══════════════════════════════════════════════════════════════
@@ -13,11 +14,12 @@ import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
  */
 
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { cpus, totalmem } from 'os';
 import { verifyPlatformCommand, isStaleCommand, type PlatformCommand } from '../lib/platform-auth.js';
 import { isRegistered } from '../lib/model-registry.js';
-import { loadOrCreateAttestorIdentity, signPeerRequest, type AttestorIdentity } from '../p2p/identity.js';
+import { loadOrCreateAttestorIdentity, signPeerRequest, signWithIdentity, type AttestorIdentity } from '../p2p/identity.js';
 
 export interface NodeCapabilities {
     models: string[];
@@ -98,6 +100,26 @@ export class PlatformLink extends EventEmitter {
             try { this.setIdentity(loadOrCreateAttestorIdentity()); } catch { /* unsigned fallback */ }
         }
         return this.identity ? signPeerRequest(this.identity, this.nodeId) : {};
+    }
+
+    async rewardWallet():Promise<{address:string;revision:number;updated_at:string}|null>{
+        const r=await fetch(this.platformUrl+'/api/v1/nodes/payout-wallet?node_id='+encodeURIComponent(this.nodeId),
+            {headers:this.authHeaders(),signal:AbortSignal.timeout(20000)});
+        if(!r.ok)throw Error('payout_service_unavailable');
+        return ((await r.json()) as any).payout;
+    }
+    async bindRewardWallet(address:string,revision:number){
+        this.authHeaders(); // Ensure the persistent node identity is loaded.
+        if(!this.identity)throw Error('node_identity_unavailable');
+        const timestamp=Date.now();
+        const message=createHash('sha256').update(JSON.stringify(['gstd:payout:v1',this.nodeId,address,revision,timestamp])).digest();
+        const signature=signWithIdentity(this.identity,message).toString('hex');
+        const r=await fetch(this.platformUrl+'/api/v1/nodes/payout-wallet',{
+            method:'POST',headers:{'Content-Type':'application/json',...this.authHeaders()},
+            body:JSON.stringify({node_id:this.nodeId,address,revision,timestamp,signature}),signal:AbortSignal.timeout(25000)});
+        const data:any=await r.json();
+        if(!r.ok)throw Error(data.error||'payout_service_unavailable');
+        return data;
     }
 
     async start(intervalMs = 120_000) {
@@ -401,6 +423,7 @@ export class PlatformLink extends EventEmitter {
             const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
             const task_id: string = task.task_id;
             const model: string = payload.model || task.model || 'llama3.2:3b';
+            if(isCloudModel(model))throw Error('cloud_models_disabled');
             const prompt: unknown = payload.prompt ?? task.prompt ?? '';
             const taskMessages: unknown = payload.messages ?? task.messages;
             if (typeof prompt !== 'string' || (!prompt.trim() && !Array.isArray(taskMessages))) {
@@ -425,7 +448,7 @@ export class PlatformLink extends EventEmitter {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model, messages, stream: false, keep_alive: -1,
+                    model, messages, ...localModelOptions(model), stream: false, keep_alive: -1,
                     options: { num_ctx: Math.max(512, Math.min(8192, Number(process.env.GSTD_OLLAMA_CONTEXT) || 2048)),
                     ...(typeof maxTokens === 'number' && Number.isInteger(maxTokens) && maxTokens > 0
                         ? { num_predict: Math.min(maxTokens, 8192) } : { num_predict: 256 }),

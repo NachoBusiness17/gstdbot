@@ -1,3 +1,5 @@
+import {keyPairFromSeed,signVerify} from '@ton/crypto';
+import {createHash} from 'node:crypto';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { PlatformLink } from './platform-link.js';
 
@@ -272,4 +274,20 @@ describe('PlatformLink local compute failure', () => {
         expect(request).toHaveBeenCalledTimes(3);
         await pl.stop();
     });
+});
+
+describe('PlatformLink reward wallet commands',()=>{
+ it('signs the exact canonical payout command and keeps the node authentication wallet unchanged',async()=>{
+  const pl=makePL(),key=keyPairFromSeed(Buffer.alloc(32,95)),address='0:'+'66'.repeat(32);
+  pl.setIdentity({keyPair:key,pubkeyHex:key.publicKey.toString('hex')});
+  const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({payout:{address,revision:1}})));
+  vi.stubGlobal('fetch',fetcher);
+  await pl.bindRewardWallet(address,0);
+  const [url,options]=fetcher.mock.calls[0] as any;
+  expect(url).toBe('http://localhost:9999/api/v1/nodes/payout-wallet');
+  const body=JSON.parse(options.body);
+  const digest=createHash('sha256').update(JSON.stringify(['gstd:payout:v1','test-node-id',address,0,body.timestamp])).digest();
+  expect(signVerify(digest,Buffer.from(body.signature,'hex'),key.publicKey)).toBe(true);
+  expect(pl.getStatus().walletAddress).toBe('EQtest');
+ });
 });

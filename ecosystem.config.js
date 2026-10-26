@@ -26,12 +26,13 @@ const NODE_BIN  = process.execPath;                  // node that launched pm2
 // Resolve Ollama binary: try common install locations in order
 function findOllama() {
   const candidates = [
-    path.join(HOME, 'ollama-bin', 'bin', 'ollama'),  // Pi custom location
-    path.join(HOME, '.ollama', 'bin', 'ollama'),
+    process.env.GSTD_OLLAMA_BIN, // Explicit operator override
     '/usr/local/bin/ollama',
+    path.join(HOME, '.ollama', 'bin', 'ollama'),
+    path.join(HOME, 'ollama-bin', 'bin', 'ollama'),
     '/usr/bin/ollama',
   ];
-  return candidates.find(p => fs.existsSync(p)) || candidates[0];
+  return candidates.find(p => p && fs.existsSync(p)) || candidates[0];
 }
 
 // Resolve IPFS binary
@@ -42,7 +43,7 @@ function findIpfs() {
     '/usr/local/bin/ipfs',
     '/usr/bin/ipfs',
   ];
-  return candidates.find(p => fs.existsSync(p)) || candidates[0];
+  return candidates.find(p => p && fs.existsSync(p)) || candidates[0];
 }
 
 const OLLAMA_BIN = findOllama();
@@ -60,6 +61,7 @@ module.exports = {
     cwd: HOME,
     env: {
       OLLAMA_HOME: path.join(HOME, '.ollama'),
+      OLLAMA_NO_CLOUD: '1',
       HOME,
     },
     autorestart: true,

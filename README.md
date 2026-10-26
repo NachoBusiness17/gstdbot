@@ -19,4 +19,4 @@ Historical design notes are archived in docs/ARCHIVED_NODE_README.md. They do no
 
 ## Operator dashboard
 
-Manage local models, view CPU/RAM and compute slots, configure the first public payout address and update the node manually in the PIN-protected dashboard. [English and Russian operator guide](docs/OPERATOR_PANEL.md). Existing payout-address migration remains unavailable; the panel explains this limitation.
+Manage local models, view CPU/RAM and compute slots, configure the first public payout address and update the node manually in the PIN-protected dashboard. [English and Russian operator guide](docs/OPERATOR_PANEL.md). Bind your own public TON wallet for new rewards without changing node identity; existing balances and assigned work keep their previous recipient. The panel includes an internet model catalog with resource estimates.

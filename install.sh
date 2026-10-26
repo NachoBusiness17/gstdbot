@@ -6,13 +6,14 @@
 # ✅ Fully automatic — no interactive prompts
 # ✅ Idempotent — safe to re-run anytime
 # ✅ Resumes after interruption
-# ✅ Auto-updates if already installed
+# Existing installations update only when this installer is explicitly rerun
 # ✅ Registers as systemd service (auto-start on boot)
-# ✅ Works: Linux, macOS, WSL, ARM/RPi
+# Linux x86-64/ARM64 and WSL2; runtime/driver checks still apply.
+# macOS is best-effort; native Windows uses WSL2.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-VERSION="3.6.1"
+VERSION="3.7.0"
 INSTALL_DIR="${GSTD_INSTALL_DIR:-$HOME/gstdbot}"
 CONFIG_DIR="$HOME/.config/gstdbot"
 STATE_FILE="$CONFIG_DIR/.install_state"
@@ -21,6 +22,7 @@ API_URL="https://app.gstdtoken.com/api/v1"
 REPO_URL="https://github.com/gstdcoin/gstdbot.git"
 DASH_PORT="${GSTD_PORT:-8080}"
 MODE="${GSTD_MODE:-sovereign}"
+STARTER_MODEL="${GSTD_STARTER_MODEL:-auto}"
 
 # ─── Colors ──────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -77,9 +79,33 @@ update_existing_checkout() {
     info "Updated to ${target_hash:0:8}"
 }
 
+# Read-only preflight runs before touching configuration or installing packages.
+platform_supported() {
+    case "$1:$2" in Linux:x86_64|Linux:aarch64|Linux:arm64|Darwin:x86_64|Darwin:arm64) return 0;; *) return 1;; esac
+}
+check_environment() {
+    local system machine
+    system=$(uname -s); machine=$(uname -m)
+    printf 'System: %s\nArchitecture: %s\n' "$system" "$machine"
+    if ! platform_supported "$system" "$machine"; then
+        echo 'Unsupported OS/architecture. Use 64-bit Linux x86-64/ARM64, or WSL2 on Windows.'
+        return 2
+    fi
+    echo 'Architecture supported; model runtime and GPU drivers still require validation.'
+    [ "$system" = Darwin ] && echo 'macOS source installation is best-effort, not validated end-to-end.'
+    command -v free >/dev/null && free -m || true
+    command -v df >/dev/null && df -h "$HOME" | tail -1 || true
+    command -v node >/dev/null && node --version || true
+    command -v ollama >/dev/null && ollama --version || true
+    echo 'GPU is optional. No GPU drivers will be installed or replaced.'
+}
+
 # ─── Handle flags ────────────────────────────────────────────────
 for arg in "$@"; do
     case "$arg" in
+        --check) check_environment; exit $?;;
+        --no-model) STARTER_MODEL="none";;
+        --model=*) STARTER_MODEL="${arg#--model=}";;
         --fresh|--clean|--reset)
             echo -e "  ${YELLOW}Resetting installation state...${NC}"
             rm -f "$STATE_FILE" 2>/dev/null || true
@@ -96,14 +122,19 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --fresh       Reset state and start fresh"
-            echo "  --cloud       Cloud AI mode (default, instant, free)"
+            echo "  --check       Read-only OS/architecture/resources check"
+            echo "  --no-model    Install the node without downloading a model"
+            echo "  --model=TAG   Choose a local Ollama starter model"
+            echo "  --cloud       Legacy flag; local-only requests remain the default"
             echo "  --hybrid      Legacy compatibility flag; requests remain local by default"
             echo "  --sovereign   Local-first compute (default)"
             echo "  --port=PORT   Dashboard port (default: 8080)"
             echo "  --help        Show this help"
             echo ""
             echo "Environment variables:"
-            echo "  GSTD_MODE=cloud|hybrid|sovereign"
+            echo "  GSTD_MODE=sovereign (default)"
+            echo "  GSTD_STARTER_MODEL=auto|none|family:tag"
+            echo "  GSTD_WALLET_ADDRESS=public-TON-address"
             echo "  GSTD_PORT=8080"
             echo "  GSTD_INSTALL_DIR=~/gstdbot"
             echo "  NODE_NAME=my-node"
@@ -169,6 +200,15 @@ case $ARCH in
     aarch64|arm64)    ARCH="arm64";;
     armv7l|armv6l)    ARCH="armv7";;
 esac
+
+if ! platform_supported "$(uname -s)" "$(uname -m)"; then
+    err "Unsupported architecture. Install a 64-bit Linux x86-64/ARM64 OS; use WSL2 for Windows."
+    exit 2
+fi
+if [ -z "$PKG" ] && { ! command -v node >/dev/null || ! command -v npm >/dev/null || ! command -v git >/dev/null; }; then
+    err "Unknown package manager. Install Node.js 20+, npm, git and curl, then rerun."
+    exit 2
+fi
 
 TOTAL_RAM_MB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}' || echo 0)
 info "OS: ${OS} | Arch: ${ARCH} | RAM: ${TOTAL_RAM_MB}MB"
@@ -432,12 +472,12 @@ install_ollama() {
 pick_model() {
     # Choose the best model that fits in RAM with headroom for the OS
     local ram=$1
-    if   [ "$ram" -ge 32000 ]; then echo "qwen2.5:14b"   # 32GB+  → powerful 14B (8.7GB)
-    elif [ "$ram" -ge 16000 ]; then echo "llama3.1:8b"   # 16GB+  → quality 8B (4.7GB)
-    elif [ "$ram" -ge  8000 ]; then echo "qwen2.5:7b"    # 8GB+   → balanced 7B (4.7GB)
-    elif [ "$ram" -ge  4000 ]; then echo "llama3.2:3b"   # 4GB+   → fast 3B (2.0GB)
-    elif [ "$ram" -ge  2000 ]; then echo "llama3.2:1b"   # 2GB+   → ultra-light (0.8GB)
-    else                            echo ""               # <2GB   → skip
+    if   [ "$ram" -ge 32000 ]; then echo "qwen3.5:9b"
+    elif [ "$ram" -ge 16000 ]; then echo "qwen3.5:4b"
+    elif [ "$ram" -ge  8000 ]; then echo "qwen3.5:2b"
+    elif [ "$ram" -ge  4000 ]; then echo "qwen3.5:0.8b"
+    elif [ "$ram" -ge  2000 ]; then echo "qwen2.5:0.5b"
+    else echo ""
     fi
 }
 
@@ -448,14 +488,18 @@ if install_ollama; then
         sleep 3
     fi
 
-    CHOSEN_MODEL=$(pick_model "${TOTAL_RAM_MB:-0}")
+    if [ "$STARTER_MODEL" = none ]; then CHOSEN_MODEL=""
+    elif [ "$STARTER_MODEL" = auto ]; then CHOSEN_MODEL=$(pick_model "${TOTAL_RAM_MB:-0}")
+    elif [[ "$STARTER_MODEL" =~ ^[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$ ]] && [[ "$STARTER_MODEL" != *cloud* ]]; then CHOSEN_MODEL="$STARTER_MODEL"
+    else err "Invalid local starter model name"; exit 2
+    fi
     if [ -n "$CHOSEN_MODEL" ]; then
         # Check if already pulled
         if ollama list 2>/dev/null | grep -q "^${CHOSEN_MODEL}"; then
             info "Model ${CHOSEN_MODEL} already installed ✓"
             INSTALLED_MODEL="$CHOSEN_MODEL"
         else
-            info "Pulling ${CHOSEN_MODEL} (best model for your ${TOTAL_RAM_MB}MB RAM)..."
+            info "Pulling ${CHOSEN_MODEL} (conservative starter choice for ${TOTAL_RAM_MB}MB RAM)..."
             if ollama pull "$CHOSEN_MODEL" 2>&1 | tail -3; then
                 info "Model ${CHOSEN_MODEL} ready ✓"
                 INSTALLED_MODEL="$CHOSEN_MODEL"
@@ -464,7 +508,7 @@ if install_ollama; then
             fi
         fi
     else
-        warn "Less than 2GB RAM — skipping model pull. Add more RAM or pull manually."
+        warn "No starter model selected. Choose a compatible model in the dashboard."
     fi
 fi
 
@@ -474,9 +518,8 @@ fi
 step 8 "Starting GSTD Node OS..."
 
 # Kill any existing process
-pkill -f "node.*gstdbot.*dist/index.js" 2>/dev/null || true
-pkill -f "gstd-bridge" 2>/dev/null || true
-sleep 1
+# Existing managed process is restarted below by its own systemd/PM2 service.
+# Never kill unrelated nodes or bridge processes by a broad command pattern.
 
 # Bridge Validator — deployed separately (TON mainnet Phase 1.b)
 info "Bridge Validator: available after TON mainnet deployment"
@@ -514,6 +557,7 @@ if [ -n "$SYSTEMD_MODE" ]; then
         echo "Environment=NODE_NAME=${NODE_NAME}"
         echo "Environment=GSTD_DASHBOARD_PORT=${DASH_PORT}"
         echo "Environment=GSTD_NODE_ID=${NODE_ID}"
+        echo "Environment=OLLAMA_NO_CLOUD=1"
         echo "# Keep a Raspberry Pi / small VPS responsive"
         echo "MemoryMax=768M"
         echo "CPUQuota=80%"

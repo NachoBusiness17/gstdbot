@@ -1,3 +1,4 @@
+import {isCloudModel,localModelOptions} from '../lib/local-model-options.js';
 /**
  * Neural Router — GSTD Sovereign Network
  *
@@ -169,6 +170,7 @@ export class NeuralRouter {
     }
 
     async route(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
+        if(isCloudModel(requestedModel))throw Error('cloud_models_disabled');
         const result = await this.routeInternal(requestedModel, messages, telegramId, options);
         const isRealSubstitution = requestedModel !== 'auto' && result.model !== requestedModel;
         return isRealSubstitution ? { ...result, requestedModel } : result;
@@ -316,7 +318,7 @@ export class NeuralRouter {
             const resp = await fetch(`${ollamaUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages, stream: false, keep_alive: -1, options: { num_ctx: Math.max(512, Math.min(8192, Number(process.env.GSTD_OLLAMA_CONTEXT) || 2048)), num_predict: maxTokens, ...(temperature === undefined ? {} : { temperature }) } }),
+                body: JSON.stringify({ model, messages, ...localModelOptions(model), stream: false, keep_alive: -1, options: { num_ctx: Math.max(512, Math.min(8192, Number(process.env.GSTD_OLLAMA_CONTEXT) || 2048)), num_predict: maxTokens, ...(temperature === undefined ? {} : { temperature }) } }),
                 signal: controller.signal,
             });
             if (!resp.ok) throw new Error(`Ollama ${resp.status}: ${await resp.text()}`);

@@ -1,31 +1,71 @@
-# GSTD node operator dashboard / Панель оператора
+# GSTD 3.7 — панель оператора / Operator dashboard
 
 ## Русский
 
-Откройте адрес панели, который напечатал установщик. Обычно это `http://localhost:8080`; на существующей установке может быть другой порт. Для текущей операторской машины используется порт 8081. Через Tailscale используйте адрес машины и её порт.
+Откройте адрес панели из установщика, обычно `http://localhost:8080`. У текущей машины — `http://100.93.119.75:8081` через Tailscale. Войдите с существующим PIN. Для первого входа используйте токен `~/.config/gstdbot/setup-token` на машине и новый PIN из 8–12 цифр. Секреты не отправляйте в чат.
 
-1. **Вход.** Существующий PIN сохраняется при обновлении. Для первого запуска выберите PIN из 8–12 цифр и введите локальный токен из `~/.config/gstdbot/setup-token`. Токен и PIN не публикуйте и не отправляйте в чат.
-2. **Кошелёк начислений.** Если адрес ещё не задан, введите публичный TON-адрес вашего кошелька. Сохранение адреса и подтверждённая регистрация показаны отдельно. Seed-фраза и приватный ключ не нужны. Указание адреса не является доказательством владения. Уже закреплённый адрес показывается без возможности замены: безопасная миграция существующей ноды пока не реализована. Старые балансы автоматически не переносятся.
-3. **Модели.** Раздел «Локальные модели» показывает модели, установленные в Ollama, их размер и наличие в памяти. Введите имя модели (например, `qwen2.5:0.5b` или `llama3.2:3b`) и нажмите «Скачать модель». Дождитесь завершения прогресса. Скачивание требует интернета и места на диске. Для запуска нужна подходящая RAM. Если Ollama недоступна, панель сообщает об этом, а не показывает выдуманные модели. Удаление моделей из панели не добавлено.
-4. **Проверка.** Выберите установленную модель и отправьте вопрос. По умолчанию используется только эта нода. Передача вопроса другим нодам требует явного выбора сетевого режима.
-5. **Нагрузка.** CPU, RAM, активные вычислительные слоты, HTTP-запросы после запуска, время работы и последний успешный heartbeat показываются в верхней карточке. Отдельно показана регистрация на платформе. Счётчики запросов и uptime обнуляются после перезапуска; это не денежная статистика.
-6. **Награды.** Учёт, авторизация кошелька и вывод находятся на [платформе](https://app.gstdtoken.com/payments). Только принятая оплаченная работа делится 85/10/5. Бесплатный и локальный чат не создают токены. Вывод подписывает владелец кошелька обеспечения; это не автоматический расчёт ноды в блокчейне.
-7. **Обновление.** Нажмите «Проверить версию», изучите список изменений, затем подтвердите установку и перезапуск. Обновление Git-установки использует fast-forward, `npm ci` и полную сборку; при изменённых tracked-файлах оно отказывается их перезаписывать. Во время вычисления обновление отклоняется. После перезапуска потребуется новый вход. Процесс должен запускаться через PM2 или systemd, чтобы автоматически подняться после выхода.
-8. **Docker.** Обновляйте из checkout на машине: `git pull --ff-only`, `docker compose build`, `docker compose up -d`. Не применяйте Git-обновление панели внутри контейнера.
+### Выбор и установка модели
 
-Панель не открывает SSH, shell, установку приложений и произвольные инструменты хоста. Обновление показателей раз в 30 секунд обращается только к локальной ноде и приостанавливается в скрытой вкладке. Проверка обновлений, установка моделей и открытие платёжного интерфейса выполняются по вашему действию.
+1. Откройте «Локальные модели» → «Выберите модель из интернета».
+2. В списке доступны проверенные локальные варианты Qwen 3.5, Gemma 4, Qwen 3 Coder, GPT OSS и небольшие модели предыдущего поколения для слабых машин.
+3. Для выбранной модели показаны размер загрузки, оценка RAM и совместимость: подходит по ресурсам, нужно освободить RAM, недостаточно RAM/диска либо ресурсы удалённого Ollama неизвестны.
+4. Нажмите «Скачать модель» и дождитесь прогресса. После загрузки модель появляется в списке чата.
+5. «Проверить каталог в интернете» сверяет размеры с официальным реестром Ollama; частота ограничена одним обновлением в 6 часов. Обычное открытие каталога не обращается к реестру.
+6. В расширенном разделе можно указать другую локальную модель по имени. Теги cloud не разрешены.
+
+Оценка предусматривает запас для ОС и короткий текстовый контекст. Она не гарантирует скорость, совместимость драйверов или запуск большого контекста. Для неизвестного удалённого Ollama не используются характеристики этой машины как доказательство совместимости. GPU без подтверждённых драйверов не выдаётся за гарантированное ускорение; VRAM разных машин не складывается.
+
+Источники моделей: [Qwen 3.5](https://ollama.com/library/qwen3.5), [Gemma 4](https://ollama.com/library/gemma4), [оборудование Ollama](https://docs.ollama.com/gpu), [память и контекст](https://docs.ollama.com/faq). Если Ollama сообщает о старой версии, обновите её отдельно; драйверы установщик GSTD не заменяет.
+
+### Привязка своего кошелька
+
+В разделе «Кошелёк начислений» вставьте публичный адрес своего TON-кошелька (Tonkeeper и т. п.), отметьте применение к новым заданиям и нажмите **«Привязать мой кошелёк»**. Дождитесь подтверждения платформы. Seed-фраза и приватный ключ не нужны.
+
+Адрес идентичности ноды показан отдельно и остаётся прежним. Привязка определяет получателя будущей принятой оплаченной работы; уже назначенные задания и ранее начисленные средства сохраняют прежнего получателя. Это не перевод старых балансов. Подмена адреса и повтор старой команды блокируются подписью и ревизией.
+
+Указание публичного адреса не доказывает владение кошельком. Для доступа к его балансу нужна авторизация на [платформе](https://app.gstdtoken.com/payments). Получение и вывод не удерживают дополнительную комиссию GSTD; газ TON оплачивает подписант выплаты. Только принятая оплаченная работа делится 85/10/5; локальный и бесплатный чат не создают токены.
+
+### Нагрузка и обновление
+
+Панель показывает CPU, RAM, вычислительные слоты, HTTP-запросы с момента запуска, uptime, регистрацию и последний heartbeat. Это локальные измерения, не денежная статистика. Обновление раз в 30 секунд работает только в видимой вкладке и не опрашивает Cloudflare.
+
+Обновление ноды запускается вручную: проверьте версию, изучите изменения, подтвердите установку/перезапуск. Git fast-forward, npm ci и полная сборка сохраняют ключи и конфигурацию; изменённые tracked-файлы не перезаписываются. Во время вычисления обновление отклоняется. Процесс должен запускаться через PM2/systemd для автоматического возврата после перезапуска.
+
+Docker обновляется на машине: `git pull --ff-only`, `docker compose build`, `docker compose up -d`. Не используйте Git-обновление панели внутри контейнера.
+
+### Linux и несколько машин
+
+Проверка среды без установки:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash -s -- --check
+```
+
+Установка с автоматическим выбором небольшой стартовой модели:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash
+```
+
+Вместо автоматического выбора доступны `--model=qwen3.5:0.8b` и `--no-model`. Основные цели — Linux x86-64/ARM64 и WSL2. 32-битные ARM и нативный Windows не поддерживаются этим Bash-установщиком; для Windows нужен WSL2. macOS — best-effort и не подтверждён чистой установкой. На неизвестном дистрибутиве заранее установите Node.js 20+, npm, git и curl. Отдельные CPU, GPU и драйверы требуют проверки Ollama. Поддержка буквально любого устройства не заявляется.
+
+Для нескольких Linux-хостов создайте `hosts.txt` (один SSH-адрес в строке) и используйте [пакетный установщик](../scripts/install-cluster.sh):
+
+```bash
+bash scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --plan
+bash scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS
+```
+
+SSH-доступ и записи known_hosts должны быть настроены заранее. Ключи нод создаются отдельно на каждой машине и не копируются. Существующие адреса/балансы не перезаписываются. Текущий лимит платформы — 10 живых идентичностей на один регистрационный кошелёк. Каждая машина — отдельная нода; это распределение запросов, а не объединение RAM/GPU для одной большой модели. Для публичного платного инференса каждой ноде нужен доступный HTTPS endpoint; пакетный установщик не создаёт туннели автоматически. Живого кластера для end-to-end проверки сейчас нет.
 
 ## English
 
-Open the dashboard address printed by the installer, normally `http://localhost:8080`. Existing installations may use a different port; this operator machine uses 8081. Tailscale access uses the machine address and its configured port.
+Open the dashboard printed by the installer (normally port 8080; this machine uses 8081). Sign in with the existing PIN. First setup uses the local setup token and an 8–12 digit PIN.
 
-- **Sign in:** existing PINs survive updates. First setup uses an 8–12 digit PIN and the local `~/.config/gstdbot/setup-token`. Keep both private.
-- **Earning wallet:** enter a public TON address if none is configured. The panel distinguishes local persistence from confirmed platform registration. No seed or private key is requested. Entering an address is not proof of ownership. Replacing an existing bound address requires a separate migration that is not implemented; old balances do not move automatically.
-- **Models:** view installed Ollama models, disk sizes and loaded state. Download a model by its Ollama name and wait for progress to finish. Check disk space, bandwidth and RAM. An unavailable Ollama service is reported explicitly. Model deletion is not provided by this panel.
-- **Test:** select an installed model and ask a question. Local-only is the default; routing to another GSTD node requires explicit selection.
-- **Load:** view CPU, RAM, active compute slots, HTTP request count since start, uptime and last successful heartbeat. Registration is shown separately. Restart resets request count and uptime; these are not financial figures.
-- **Rewards:** open [platform payments](https://app.gstdtoken.com/payments) for accounting, wallet authentication and withdrawals. Only funded accepted work is split 85/10/5. Local and promotional requests create no rewards. The custody owner signs blockchain payouts.
-- **Source updates:** check manually, review changes, then confirm update and restart. Updates use fast-forward Git, locked dependencies and a full build; tracked local changes are not overwritten. Busy compute blocks an update. PM2/systemd must restart the process. Sign in again after restart.
-- **Docker:** update the checkout with `git pull --ff-only`, then `docker compose build` and `docker compose up -d`. Do not use the dashboard Git updater inside a container.
-
-Local measurements refresh every 30 seconds only while visible; this does not poll Cloudflare. No shell, SSH or arbitrary host applications are exposed.
+- **Models:** select a reviewed local Ollama model from the internet catalog. Read the download size, estimated RAM, resource status and metadata date, then download. Installed models appear in the chat selector. Online metadata refresh is manual and limited to once per 6 hours. The advanced field accepts other local model names; cloud tags are blocked.
+- **Compatibility:** estimates include OS headroom and short text context. They do not guarantee runtime, driver support or speed. Remote Ollama hardware is not inferred from the gateway machine. Memory across machines is not pooled.
+- **Your wallet:** paste your public TON address, acknowledge that the change applies to new work, and press **Bind my wallet**. Wait for platform confirmation. Node identity is preserved. Previously assigned work and existing balances keep their old recipient; no balances move. Changes use node signatures and revisions. Wallet authentication on the platform is still required to access balances and withdrawals.
+- **Load:** CPU, RAM, slots, request count, uptime and heartbeat are local measurements. Visible-tab refresh does not poll Cloudflare.
+- **Updates:** manual Git source updates require npm, a successful build and PM2/systemd. Docker uses an image rebuild.
+- **Hardware:** Linux x86-64/ARM64 and WSL2 are primary targets. Use `bash install.sh --check` before installation. Native Windows and 32-bit ARM are unsupported by this Bash installer; macOS is best-effort. Model runtime and GPU drivers need validation.
+- **Multiple Linux machines:** use `scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --plan` to validate an inventory before installation. SSH and known_hosts must already be configured. Each host gets an independent identity. The current platform cap is 10 live identities per registration wallet. Public paid inference requires a reachable HTTPS endpoint per node; automatic tunnels and tensor-parallel multi-host execution are not provided. No physical cluster was available for an end-to-end deployment test.

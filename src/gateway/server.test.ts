@@ -227,7 +227,7 @@ describe('gateway free API key authorization', () => {
     });
     it('protects operator measurements, payout setup and model downloads before any side effect', async () => {
         const address = gatewayServer!.address() as {port:number};
-        for (const path of ['/api/node/operator','/api/node/payout-address','/api/ollama/models/pull','/api/check-update','/api/update']) {
+        for (const path of ['/api/ollama/catalog','/api/ollama/catalog/refresh','/api/node/reward-wallet','/api/node/operator','/api/node/payout-address','/api/ollama/models/pull','/api/check-update','/api/update']) {
             const result = await postJson(address.port, {address: LINKED_WALLET,model:'llama3.2:3b'}, {}, path);
             expect(result.status).toBe(401);
         }
@@ -275,6 +275,18 @@ describe('gateway free API key authorization', () => {
         });
         expect(text).toContain('"completed":50');
         expect(text).toContain('"status":"success"');
+    });
+
+    it('offers an authenticated hardware-labelled catalog without polling an internet service', async () => {
+        const address = gatewayServer!.address() as {port:number};
+        const login = await postJson(address.port, {pin:'83572914',setupToken:process.env.GSTD_DASHBOARD_SETUP_TOKEN}, {}, '/api/auth/setup');
+        const result=await postJson(address.port, {}, {Authorization:'Bearer '+login.body.token}, '/api/ollama/catalog','GET');
+        expect(result.status).toBe(200);
+        const body=result.body as any;
+        expect(body.models.length).toBeGreaterThanOrEqual(10);
+        expect(body.models.find((m:any)=>m.id==='qwen3.5:0.8b').compatibility.runtime_validation).toBe('required');
+        expect(body.hardware.cpu_cores).toBeGreaterThan(0);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
 });

@@ -1,3 +1,5 @@
+import {isCloudModel} from '../lib/local-model-options.js';
+import {modelCatalog,refreshModelCatalog,catalogHardware,compatibility} from '../lib/model-catalog.js';
 import {withComputeSlot,ComputeCapacityError,computeLoad} from '../security/compute.js';
 import { hashPin,verifyPin } from '../security/pin.js';
 import { nodeSurface } from '../security/surface.js';
@@ -528,6 +530,31 @@ export class OmegaGateway {
                 accounting_url: this.config.swarmUrl + '/payments',
             });
         });
+        this.app.get('/api/node/reward-wallet', async (_req,res)=>{
+            try{res.json({payout:await this.platformLink.rewardWallet(),identity_wallet:this.wallet?.getAddress()||null});}
+            catch{res.status(503).json({error:'payout_service_unavailable'});}
+        });
+        this.app.post('/api/node/reward-wallet', async(req,res)=>{
+            if(!requireNodeAuth(req,res))return;
+            let address:string;
+            try{const {Address}=require('@ton/core');address=Address.parse(String(req.body?.address||'').trim()).toRawString();}
+            catch{return res.status(400).json({error:'invalid_ton_address'});}
+            const revision=req.body?.revision;
+            if(!Number.isSafeInteger(revision)||revision<0)return res.status(400).json({error:'invalid_revision'});
+            if(!this.wallet)return res.status(503).json({error:'wallet_not_initialized'});
+            try{
+                if(!this.wallet.getAddress()){
+                    const initial=this.wallet.configurePayoutAddress(address);
+                    this.platformLink.setWalletAddress(initial);
+                    if(!await this.platformLink.syncRegistration())return res.status(503).json({error:'node_registration_pending'});
+                }
+                const data=await this.platformLink.bindRewardWallet(address,revision);
+                let cached=true;
+                try{this.wallet.cacheRewardAddress(address);}catch{cached=false;}
+                res.json({...data,local_cached:cached});
+            }catch(error:any){res.status(error.message==='payout_revision_conflict'?409:503).json({error:error.message});}
+        });
+
         this.app.post('/api/node/payout-address', async (req, res) => {
             if (!requireNodeAuth(req, res)) return;
             if (typeof req.body?.address !== 'string' || !this.isTonAddress(req.body.address.trim())) {
@@ -4287,59 +4314,17 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
 
         // ─── Ollama Model Management ─────────────────────────────────────
 
-        const POPULAR_MODELS = [
-            // ── Ultra-light (< 2 GB RAM) ───────────────────────────────────────────────
-            { id: 'llama3.2:1b',           name: 'Llama 3.2 1B',          size_gb: 0.8,  desc: 'Ultra-fast, works on any device',                     family: 'llama',     tier: 'minimal'  },
-            { id: 'gemma3:1b',             name: 'Gemma 3 1B',            size_gb: 0.8,  desc: 'Google 2025, lightweight & capable',                  family: 'gemma',     tier: 'minimal'  },
-            { id: 'qwen2.5:0.5b',          name: 'Qwen 2.5 0.5B',         size_gb: 0.4,  desc: 'Alibaba tiniest — math & multilingual on 1 GB RAM',   family: 'qwen',      tier: 'minimal'  },
-            { id: 'smollm2:360m',          name: 'SmolLM2 360M',          size_gb: 0.2,  desc: 'HuggingFace, fastest inference imaginable',            family: 'smollm',    tier: 'minimal'  },
-            { id: 'moondream',             name: 'Moondream 1.8B',        size_gb: 1.1,  desc: 'Vision model — describe images, answer questions',     family: 'vision',    tier: 'minimal'  },
-            { id: 'nomic-embed-text',      name: 'Nomic Embed Text',      size_gb: 0.3,  desc: 'Text embeddings for search / RAG',                    family: 'embed',     tier: 'minimal'  },
-            { id: 'all-minilm',            name: 'All-MiniLM',            size_gb: 0.05, desc: 'Tiny embedding model, sentence similarity',            family: 'embed',     tier: 'minimal'  },
-            // ── Light (2–6 GB RAM) ─────────────────────────────────────────────────────
-            { id: 'llama3.2:3b',           name: 'Llama 3.2 3B',          size_gb: 2.0,  desc: 'Fast, great for edge & mobile devices',               family: 'llama',     tier: 'light'    },
-            { id: 'qwen2.5:3b',            name: 'Qwen 2.5 3B',           size_gb: 2.0,  desc: 'Alibaba, strong multilingual & math',                 family: 'qwen',      tier: 'light'    },
-            { id: 'phi4-mini:3.8b',        name: 'Phi-4 Mini 3.8B',       size_gb: 2.5,  desc: 'Microsoft 2025, best-in-class small model',           family: 'phi',       tier: 'light'    },
-            { id: 'gemma3:4b',             name: 'Gemma 3 4B',            size_gb: 3.3,  desc: 'Google 2025, excellent reasoning & code',             family: 'gemma',     tier: 'light'    },
-            { id: 'qwen2.5-coder:3b',      name: 'Qwen 2.5 Coder 3B',     size_gb: 2.0,  desc: 'Code generation, completion and review on 2 GB',      family: 'qwen',      tier: 'light'    },
-            { id: 'deepseek-r1:1.5b',      name: 'DeepSeek R1 1.5B',      size_gb: 1.0,  desc: 'Reasoning model — logic & math on tiny hardware',     family: 'deepseek',  tier: 'light'    },
-            { id: 'tinyllama:1.1b',        name: 'TinyLlama 1.1B',        size_gb: 0.7,  desc: 'Classic tiny model, broad compatibility',             family: 'llama',     tier: 'light'    },
-            { id: 'orca-mini:3b',          name: 'Orca Mini 3B',          size_gb: 2.0,  desc: 'Instruction-tuned, good for chat tasks',              family: 'orca',      tier: 'light'    },
-            // ── Standard (6–12 GB RAM) ─────────────────────────────────────────────────
-            { id: 'llama3.1:8b',           name: 'Llama 3.1 8B',          size_gb: 4.7,  desc: 'Meta, best quality/speed balance',                    family: 'llama',     tier: 'standard' },
-            { id: 'qwen2.5:7b',            name: 'Qwen 2.5 7B',           size_gb: 4.7,  desc: 'Alibaba, top coding & math benchmark',                family: 'qwen',      tier: 'standard' },
-            { id: 'qwen2.5-coder:7b',      name: 'Qwen 2.5 Coder 7B',     size_gb: 4.7,  desc: 'Specialized for code generation & review',            family: 'qwen',      tier: 'standard' },
-            { id: 'deepseek-r1:7b',        name: 'DeepSeek R1 7B',        size_gb: 4.7,  desc: 'Reasoning specialist with chain-of-thought',          family: 'deepseek',  tier: 'standard' },
-            { id: 'mistral:7b',            name: 'Mistral 7B',            size_gb: 4.1,  desc: 'Classic — strong reasoning, long context',            family: 'mistral',   tier: 'standard' },
-            { id: 'mistral-nemo:12b',      name: 'Mistral Nemo 12B',      size_gb: 7.1,  desc: 'Long context (128k), instruction-tuned',             family: 'mistral',   tier: 'standard' },
-            { id: 'gemma3:12b',            name: 'Gemma 3 12B',           size_gb: 8.1,  desc: 'Google 2025, strong all-round performance',          family: 'gemma',     tier: 'standard' },
-            { id: 'llava:7b',              name: 'LLaVA 7B',              size_gb: 4.7,  desc: 'Vision + language — analyze images in chat',          family: 'vision',    tier: 'standard' },
-            { id: 'llava:13b',             name: 'LLaVA 13B',             size_gb: 8.0,  desc: 'Better vision model, needs 10 GB RAM',                family: 'vision',    tier: 'standard' },
-            { id: 'codellama:7b',          name: 'Code Llama 7B',         size_gb: 3.8,  desc: 'Meta code model, infill & chat modes',                family: 'llama',     tier: 'standard' },
-            { id: 'codellama:13b',         name: 'Code Llama 13B',        size_gb: 7.4,  desc: 'Bigger Code Llama, better completion quality',        family: 'llama',     tier: 'standard' },
-            { id: 'aya:8b',               name: 'Aya 8B',                size_gb: 4.8,  desc: 'Cohere multilingual — 23 languages incl. Russian',    family: 'aya',       tier: 'standard' },
-            { id: 'neural-chat:7b',        name: 'Neural Chat 7B',        size_gb: 4.1,  desc: 'Intel fine-tune, optimized for dialogue',             family: 'mistral',   tier: 'standard' },
-            { id: 'starling-lm:7b',        name: 'Starling LM 7B',        size_gb: 4.1,  desc: 'RLHF-tuned for helpfulness',                          family: 'mistral',   tier: 'standard' },
-            { id: 'mxbai-embed-large',     name: 'MXBai Embed Large',     size_gb: 0.7,  desc: 'Best-in-class embedding model for RAG',               family: 'embed',     tier: 'standard' },
-            // ── Powerful (12–24 GB RAM) ────────────────────────────────────────────────
-            { id: 'qwen2.5:14b',           name: 'Qwen 2.5 14B',          size_gb: 8.7,  desc: 'Alibaba, GPT-4 class, top leaderboard',              family: 'qwen',      tier: 'powerful' },
-            { id: 'deepseek-r1:14b',       name: 'DeepSeek R1 14B',       size_gb: 8.7,  desc: 'State-of-the-art reasoning, math & science',         family: 'deepseek',  tier: 'powerful' },
-            { id: 'phi4:14b',              name: 'Phi-4 14B',             size_gb: 9.1,  desc: 'Microsoft 2025, STEM & long-context leader',         family: 'phi',       tier: 'powerful' },
-            { id: 'qwen2.5-coder:14b',     name: 'Qwen 2.5 Coder 14B',    size_gb: 8.7,  desc: 'Best open-source coding model available',            family: 'qwen',      tier: 'powerful' },
-            { id: 'gemma3:27b',            name: 'Gemma 3 27B',           size_gb: 17.0, desc: 'Google 2025 flagship, top quality at 27B',            family: 'gemma',     tier: 'powerful' },
-            { id: 'mistral-small3.1:22b',  name: 'Mistral Small 3.1 22B', size_gb: 13.0, desc: 'Mistral 2025, vision + 128k context',                family: 'mistral',   tier: 'powerful' },
-            { id: 'aya-expanse:32b',       name: 'Aya Expanse 32B',       size_gb: 19.0, desc: 'Cohere multilingual 32B — 23 languages',             family: 'aya',       tier: 'powerful' },
-            { id: 'codellama:34b',         name: 'Code Llama 34B',        size_gb: 19.0, desc: 'Meta largest code model, best completion',           family: 'llama',     tier: 'powerful' },
-            { id: 'llava:34b',             name: 'LLaVA 34B',             size_gb: 20.0, desc: 'Highest quality vision model available locally',      family: 'vision',    tier: 'powerful' },
-            // ── Maximum (32+ GB RAM / GPU) ─────────────────────────────────────────────
-            { id: 'qwen2.5:32b',           name: 'Qwen 2.5 32B',          size_gb: 19.0, desc: 'Near-GPT-4o quality, open weights',                  family: 'qwen',      tier: 'max'      },
-            { id: 'deepseek-r1:32b',       name: 'DeepSeek R1 32B',       size_gb: 19.0, desc: 'Frontier reasoning model, beats o1-preview',         family: 'deepseek',  tier: 'max'      },
-            { id: 'qwen2.5-coder:32b',     name: 'Qwen 2.5 Coder 32B',    size_gb: 19.0, desc: 'Best open coding model at any size',                 family: 'qwen',      tier: 'max'      },
-            { id: 'deepseek-r1:70b',       name: 'DeepSeek R1 70B',       size_gb: 43.0, desc: 'Top reasoning model, comparable to o1',              family: 'deepseek',  tier: 'max'      },
-            { id: 'llama3.3:70b',          name: 'Llama 3.3 70B',         size_gb: 43.0, desc: 'Meta flagship — requires GPU or 64 GB RAM',          family: 'llama',     tier: 'max'      },
-            { id: 'qwen2.5:72b',           name: 'Qwen 2.5 72B',          size_gb: 47.0, desc: 'Alibaba largest — top multilingual & math',          family: 'qwen',      tier: 'max'      },
-            { id: 'codestral:22b',         name: 'Codestral 22B',         size_gb: 13.0, desc: 'Mistral coding model, 80+ languages supported',      family: 'mistral',   tier: 'max'      },
-        ];
+
+
+        const catalogResponse = () => {
+            const hardware=catalogHardware();
+            return {hardware,models:modelCatalog().map(m=>({...m,compatibility:compatibility(m,hardware)})),
+                refreshed_at:new Date().toISOString(),estimate_only:true};
+        };
+        this.app.get('/api/ollama/catalog', (_req,res)=>res.json(catalogResponse()));
+        this.app.post('/api/ollama/catalog/refresh', async (_req,res)=>{
+            await refreshModelCatalog();res.json(catalogResponse());
+        });
 
         // GET /api/ollama/models — installed + catalog
         this.app.get('/api/ollama/models', async (_req, res) => {
@@ -4358,7 +4343,8 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                 if (r.ok) running = ((await r.json() as any).models || []).map((m: any) => m.name as string);
             } catch (_) {}
             const installedIds = new Set(installed.map((m: any) => m.id));
-            const catalog = POPULAR_MODELS.map(m => ({ ...m, installed: installedIds.has(m.id) }));
+            const hardware=catalogHardware();
+            const catalog = modelCatalog().map(m => ({ ...m, installed: installedIds.has(m.id), compatibility:compatibility(m,hardware) }));
             res.json({ installed, running, catalog, ollama_available: available });
         });
 
@@ -4366,10 +4352,13 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
         this.app.post('/api/ollama/models/pull', async (req, res) => {
             if (!requireNodeAuth(req, res)) return;
             const { model } = req.body || {};
-            if (!model || typeof model !== 'string' || !/^[a-z0-9:._/-]+$/i.test(model)) {
+            if (!model || typeof model !== 'string' || !/^[a-z0-9:._/-]{1,160}$/i.test(model) || isCloudModel(model)) {
                 return res.status(400).json({ error: 'Invalid model name' });
             }
             const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+            const reviewed = modelCatalog().find(m=>m.id===model);
+            if(reviewed && compatibility(reviewed,catalogHardware()).status==='insufficient')
+                return res.status(409).json({error:'model_resources_insufficient'});
             logActivity(`Pulling Ollama model: ${model}`, 'info');
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
