@@ -1,4 +1,4 @@
-import {withComputeSlot,ComputeCapacityError} from '../security/compute.js';
+import {withComputeSlot,ComputeCapacityError,computeLoad} from '../security/compute.js';
 import { hashPin,verifyPin } from '../security/pin.js';
 import { nodeSurface } from '../security/surface.js';
 /**
@@ -387,7 +387,7 @@ export class OmegaGateway {
             this.platformLink.setWalletAddress(addr);
             logActivity(`Wallet connected to gateway — heartbeat will use ${addr.slice(0,8)}...`, 'success');
         } else {
-            logActivity('Wallet connected to gateway — rewards active', 'success');
+            logActivity('No payout address configured — paid work is unavailable', 'warn');
         }
     }
 
@@ -510,6 +510,40 @@ export class OmegaGateway {
             });
         });
 
+        // Operator view uses local measurements and the actual signed PlatformLink.
+        this.app.get('/api/node/operator', (_req, res) => {
+            const cpu = cpus();
+            res.json({
+                version: require('../../package.json').version,
+                node_id: this.nodeId, name: process.env.NODE_NAME || hostname(),
+                uptime: process.uptime(),
+                cpu: { cores: cpu.length, usage: currentCpuUsage, load_1m: loadavg()[0] },
+                ram: { total: totalmem(), free: freemem(), used: totalmem()-freemem() },
+                disk: getDiskUsage(),
+                compute: computeLoad(),
+                requests: this.metrics.totalRequests,
+                platform: this.platformLink.getStatus(),
+                payout_address: this.wallet?.getAddress() || null,
+                models: this._availableModels,
+                accounting_url: this.config.swarmUrl + '/payments',
+            });
+        });
+        this.app.post('/api/node/payout-address', async (req, res) => {
+            if (!requireNodeAuth(req, res)) return;
+            if (typeof req.body?.address !== 'string' || !this.isTonAddress(req.body.address.trim())) {
+                return res.status(400).json({ error: 'invalid_ton_address' });
+            }
+            if (!this.wallet) return res.status(503).json({error:'wallet_not_initialized'});
+            try {
+                const address = this.wallet.configurePayoutAddress(req.body.address);
+                this.platformLink.setWalletAddress(address);
+                const synced = await this.platformLink.syncRegistration();
+                res.status(synced ? 200 : 202).json({address, platform_synced:synced});
+            } catch (error: any) {
+                res.status(error.message === 'payout_migration_required' ? 409 : 400).json({error:error.message});
+            }
+        });
+
         // ─── Self-Update (OTA from dashboard) ────────────────────
 
         this.app.get('/api/check-update', async (_req, res) => {
@@ -561,6 +595,7 @@ export class OmegaGateway {
 
         this.app.post('/api/update', async (req, res) => {
             if (!requireNodeAuth(req, res)) return;
+            if (computeLoad().active > 0) return res.status(409).json({error:'compute_busy'});
             // ── Manifest signature gate ───────────────────────────
             const manifest: UpdateManifest | undefined = req.body?.manifest;
             const enforced = process.env.PLATFORM_SIGNING_ENFORCED === 'true';
@@ -596,21 +631,21 @@ export class OmegaGateway {
 
                 // Step 3: Install deps & Build (strict check)
                 try {
-                    execSync('npm install --legacy-peer-deps --include=dev', {
+                    execSync('npm ci --include=dev', {
                         cwd: installDir, encoding: 'utf-8', timeout: 120000,
                     });
                     
-                    execSync('node_modules/.bin/tsc --skipLibCheck', {
+                    execSync('npm run build', {
                         cwd: installDir, encoding: 'utf-8', timeout: 120000,
                     });
                 } catch (buildError: any) {
                     // Update failed! Rollback to prevent node crash/fail
                     try {
                         rollbackNodeUpdate(installDir, preUpdateHash);
-                        execSync('npm install --legacy-peer-deps --include=dev', {
+                        execSync('npm ci --include=dev', {
                             cwd: installDir, encoding: 'utf-8', timeout: 120000,
                         });
-                        execSync('node_modules/.bin/tsc --skipLibCheck', {
+                        execSync('npm run build', {
                             cwd: installDir, encoding: 'utf-8', timeout: 120000,
                         });
                     } catch (rollbackError: any) {
@@ -1514,13 +1549,13 @@ export class OmegaGateway {
                     if (update.previousHash !== update.updatedHash) {
                         await sendReply(`📦 Update ${update.previousHash.slice(0, 8)} → ${update.updatedHash.slice(0, 8)}. Applying...`);
                         try {
-                            execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
-                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                            execSync('npm ci --include=dev', { cwd: installDir, timeout: 120000 });
+                            execSync('npm run build', { cwd: installDir, timeout: 120000 });
                         } catch (buildError: any) {
                             try {
                                 rollbackNodeUpdate(installDir, update.previousHash);
-                                execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
-                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                                execSync('npm ci --include=dev', { cwd: installDir, timeout: 120000 });
+                                execSync('npm run build', { cwd: installDir, timeout: 120000 });
                             } catch (rollbackError: any) {
                                 throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
                             }
@@ -1577,13 +1612,13 @@ export class OmegaGateway {
                     const update = fastForwardNodeUpdate(installDir, branch);
                     if (component === 'core' || component === 'all') {
                         try {
-                            execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
-                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                            execSync('npm ci --include=dev', { cwd: installDir, timeout: 120000 });
+                            execSync('npm run build', { cwd: installDir, timeout: 120000 });
                         } catch (buildError: any) {
                             try {
                                 rollbackNodeUpdate(installDir, update.previousHash);
-                                execSync('npm install --legacy-peer-deps --include=dev', { cwd: installDir, timeout: 120000 });
-                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd: installDir, timeout: 120000 });
+                                execSync('npm ci --include=dev', { cwd: installDir, timeout: 120000 });
+                                execSync('npm run build', { cwd: installDir, timeout: 120000 });
                             } catch (rollbackError: any) {
                                 throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
                             }
@@ -2024,13 +2059,13 @@ export class OmegaGateway {
                         const branch = getDefaultBranch(cwd);
                         const update = fastForwardNodeUpdate(cwd, branch);
                         try {
-                            execSync('npm install --legacy-peer-deps --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
-                            execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, encoding: 'utf-8', timeout: 60000 });
+                            execSync('npm ci --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
+                            execSync('npm run build', { cwd, encoding: 'utf-8', timeout: 60000 });
                         } catch (buildError: any) {
                             try {
                                 rollbackNodeUpdate(cwd, update.previousHash);
-                                execSync('npm install --legacy-peer-deps --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
-                                execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, encoding: 'utf-8', timeout: 60000 });
+                                execSync('npm ci --include=dev', { cwd, encoding: 'utf-8', timeout: 120000 });
+                                execSync('npm run build', { cwd, encoding: 'utf-8', timeout: 60000 });
                             } catch (rollbackError: any) {
                                 throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
                             }
@@ -2083,13 +2118,13 @@ export class OmegaGateway {
                 const cwd = join(__dirname, '../..');
                 const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
                 try {
-                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                 } catch (buildError: any) {
                     // Never restart into a half-built node: restore the previous commit and rebuild it.
                     rollbackNodeUpdate(cwd, update.previousHash);
-                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                     throw new Error(`Update build failed and was rolled back: ${buildError.message}`);
                 }
                 logActivity('Update complete — restarting to apply.', 'success');
@@ -2958,13 +2993,13 @@ export class OmegaGateway {
                 // Git pull + rebuild
                 const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
                 try {
-                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                 } catch (buildError: any) {
                     try {
                         rollbackNodeUpdate(cwd, update.previousHash);
-                        execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                        execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                        execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                        execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                     } catch (rollbackError: any) {
                         throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
                     }
@@ -3000,13 +3035,13 @@ export class OmegaGateway {
                 const cwd = join(__dirname, '../..');
                 const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
                 try {
-                    execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                    execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                    execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                    execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                 } catch (buildError: any) {
                     try {
                         rollbackNodeUpdate(cwd, update.previousHash);
-                        execSync('npm install --legacy-peer-deps --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
-                        execSync('node_modules/.bin/tsc --skipLibCheck', { cwd, timeout: 60000, stdio: 'pipe' });
+                        execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
+                        execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });
                     } catch (rollbackError: any) {
                         throw new Error(`Update failed (${buildError.message}); rollback failed (${rollbackError.message})`);
                     }
@@ -4311,11 +4346,12 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
             let installed: any[] = [];
             let running: any[] = [];
+            let available = false;
             try {
                 const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
-                if (r.ok) installed = ((await r.json() as any).models || []).map((m: any) => ({
+                if (r.ok) { available = true; installed = ((await r.json() as any).models || []).map((m: any) => ({
                     id: m.name, size: m.size, modified_at: m.modified_at, details: m.details,
-                }));
+                })); }
             } catch (_) {}
             try {
                 const r = await fetch(`${ollamaUrl}/api/ps`, { signal: AbortSignal.timeout(2000) });
@@ -4323,7 +4359,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             } catch (_) {}
             const installedIds = new Set(installed.map((m: any) => m.id));
             const catalog = POPULAR_MODELS.map(m => ({ ...m, installed: installedIds.has(m.id) }));
-            res.json({ installed, running, catalog, ollama_available: installed.length > 0 || running.length >= 0 });
+            res.json({ installed, running, catalog, ollama_available: available });
         });
 
         // POST /api/ollama/models/pull — SSE stream of download progress
@@ -4352,11 +4388,14 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                 }
                 const reader = (pullResp.body as any).getReader();
                 const decoder = new TextDecoder();
+                let pending = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    const text = decoder.decode(value, { stream: true });
-                    for (const line of text.split('\n')) {
+                    pending += decoder.decode(value, { stream: true });
+                    const lines = pending.split('\n');
+                    pending = lines.pop() || '';
+                    for (const line of lines) {
                         if (!line.trim()) continue;
                         try {
                             const data = JSON.parse(line);

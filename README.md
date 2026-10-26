@@ -16,3 +16,7 @@ Set your externally controlled payout address with GSTD_WALLET_ADDRESS. Keep the
 
 
 Historical design notes are archived in docs/ARCHIVED_NODE_README.md. They do not describe enabled production features.
+
+## Operator dashboard
+
+Manage local models, view CPU/RAM and compute slots, configure the first public payout address and update the node manually in the PIN-protected dashboard. [English and Russian operator guide](docs/OPERATOR_PANEL.md). Existing payout-address migration remains unavailable; the panel explains this limitation.

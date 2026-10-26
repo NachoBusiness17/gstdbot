@@ -116,7 +116,11 @@ export class PlatformLink extends EventEmitter {
         try { return readFileSync('/tmp/gstd_tunnel_url.txt', 'utf8').trim(); } catch { return ''; }
     }
 
-    private async register() {
+    async syncRegistration(): Promise<boolean> {
+        return this.register();
+    }
+
+    private async register(): Promise<boolean> {
         try {
             if (!this.walletAddress.trim()) {
                 throw new Error('A wallet address is required before registering the node');
@@ -154,7 +158,7 @@ export class PlatformLink extends EventEmitter {
                 const body = await resp.text().catch(() => '');
                 if (resp.status === 402 && body.includes('DEPLOYMENT_DISABLED')) {
                     console.warn('[PlatformLink] DEPLOYMENT_DISABLED — registration skipped, running standalone.');
-                    return;
+                    return false;
                 }
                 throw new Error(`Register failed: ${resp.status}`);
             }
@@ -166,10 +170,12 @@ export class PlatformLink extends EventEmitter {
             this.registrationRetryTimer = null;
             this.emit('registered', data);
             console.log(`  ✅ Platform Link: node registered (${this.nodeId})`);
+            return true;
         } catch (e: any) {
             this.failCount++;
             this.emit('register:error', { error: e.message, failCount: this.failCount });
             this.scheduleRegistrationRetry();
+            return false;
         }
     }
 
@@ -474,6 +480,7 @@ export class PlatformLink extends EventEmitter {
     getStatus() {
         return {
             registered: this.registered,
+            walletAddress: this.walletAddress,
             lastHeartbeat: this.lastHeartbeat?.toISOString() || null,
             failCount: this.failCount,
             platformUrl: this.platformUrl,

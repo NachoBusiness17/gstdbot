@@ -1,0 +1,20 @@
+import {it,expect,vi} from 'vitest';
+import {mkdtempSync,readFileSync,statSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Address} from '@ton/core';
+vi.mock('../gateway/server.js',()=>({logActivity:vi.fn()}));
+import {NodeWallet} from './manager.js';
+it('binds only a public address, accepts equivalent TON encodings and refuses implicit migration',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'gstd-payout-'));
+ const wallet=new NodeWallet({} as any,directory);
+ const address=Address.parse('0:'+'33'.repeat(32));
+ expect(wallet.configurePayoutAddress(address.toString())).toBe(address.toRawString());
+ const file=join(directory,'wallet.json'),before=readFileSync(file,'utf8');
+ expect(JSON.parse(before)).toEqual({address:address.toRawString(),publicKey:'',created:expect.any(String)});
+ expect(wallet.configurePayoutAddress(address.toRawString())).toBe(address.toRawString());
+ expect(()=>wallet.configurePayoutAddress('0:'+'44'.repeat(32))).toThrow('payout_migration_required');
+ expect(()=>wallet.configurePayoutAddress('invalid')).toThrow();
+ expect(readFileSync(file,'utf8')).toBe(before);
+ if(process.platform!=='win32')expect(statSync(file).mode&0o777).toBe(0o600);
+});

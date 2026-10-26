@@ -65,9 +65,9 @@ export class NodeWallet {
     private readonly walletFile: string;
     private readonly earningsFile: string;
 
-    constructor(config: NodeConfig) {
+    constructor(config: NodeConfig, configDirectory?: string) {
         this.config = config;
-        this.configDir = join(homedir(), '.config', 'gstdbot');
+        this.configDir = configDirectory || join(homedir(), '.config', 'gstdbot');
         this.walletFile = join(this.configDir, 'wallet.json');
         this.earningsFile = join(this.configDir, 'earnings.json');
     }
@@ -109,6 +109,21 @@ export class NodeWallet {
 
         // Save earnings log periodically
         setInterval(() => this.saveEarnings(), 5 * 60 * 1000);
+    }
+
+    /** Watch-only first binding. Replacing a registered earning identity requires migration. */
+    configurePayoutAddress(value: string): string {
+        const { Address } = require('@ton/core');
+        const address = Address.parse(value.trim()).toRawString();
+        if (this.wallet?.address && Address.parse(this.wallet.address).toRawString() !== address) {
+            throw new Error('payout_migration_required');
+        }
+        if (!this.wallet) {
+            const next: WalletConfig = { address, publicKey: '', created: new Date().toISOString() };
+            writeFileSync(this.walletFile, JSON.stringify(next, null, 2), { mode: 0o600 });
+            this.wallet = next;
+        }
+        return this.wallet.address;
     }
 
     getAddress(): string | null {
