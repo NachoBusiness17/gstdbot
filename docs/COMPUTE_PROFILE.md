@@ -30,3 +30,15 @@ Use the canonical install.sh from this repository. Configure GSTD_WALLET_ADDRESS
 Code pushes run CI only. Container publication requires an explicit workflow dispatch. Update a production node only after CI passes; rollback remains available.
 
 Automatic source updates are off by default; GSTD_AUTO_UPDATE=true is an explicit operator opt-in. The HTTP inference path permits one active request by default (configurable up to four). Operator PINs use salted scrypt; a successful legacy login migrates its digest without changing the PIN.
+
+## 3.6.1 operational checks
+
+The CLI exposes only `gateway`/`serve`, `status`, `doctor`, `send` and `chat`. It defaults to localhost and local inference, executes no model-selected host tools and persists no chat history. `--network` is explicit.
+
+Fresh script installs save the first-setup token in `~/.config/gstdbot/setup-token` with mode 0600; the token is never printed in install logs. Existing PINs and node keys are preserved. Container operators must supply their setup token explicitly.
+
+HTTP inference and assigned work share one process-wide compute limit. A busy OpenAI-compatible endpoint returns 429 with Retry-After. A busy node does not poll for another assignment.
+
+Local blockchain/staking and synthetic RevenueEngine startup are disabled; payments are handled by the platform. Corrupt saved node identities are not overwritten or replaced with an ephemeral peer. Restore their backups. A temporary-fixture test covers restoring signing and transport identities; this does not constitute a production Redis disaster recovery drill.
+
+`npm run eval:quality` runs four strict deterministic samples for each installed model, through the local gateway. Set GSTD_EVAL_URL for a different local port and GSTD_EVAL_OUTPUT for a report path. This is a smoke test, not proof of general answer quality. Both malformed structured output and timeouts fail the check.

@@ -19,7 +19,6 @@ import { keyPairFromSeed, sign, signVerify, type KeyPair } from '@ton/crypto';
 import { randomBytes, createHash } from 'crypto';
 
 const CONFIG_DIR = join(homedir(), '.config', 'gstdbot');
-const IDENTITY_FILE = join(CONFIG_DIR, 'attestor-identity.json');
 
 export interface AttestorIdentity {
     keyPair: KeyPair;
@@ -27,9 +26,11 @@ export interface AttestorIdentity {
 }
 
 /** Loads the node's attestor keypair, generating and persisting one on first run. */
-export function loadOrCreateAttestorIdentity(): AttestorIdentity {
+export function loadOrCreateAttestorIdentity(directory = process.env.GSTD_IDENTITY_DIR || CONFIG_DIR): AttestorIdentity {
+    const IDENTITY_FILE=join(directory,'attestor-identity.json');
     if (existsSync(IDENTITY_FILE)) {
         const raw = JSON.parse(readFileSync(IDENTITY_FILE, 'utf-8'));
+        if(typeof raw.seedHex!=='string'||!/^([a-fA-F0-9]{2}){32}$/.test(raw.seedHex))throw new Error('Invalid saved attestor identity; restore its backup, do not regenerate it');
         const seed = Buffer.from(raw.seedHex, 'hex');
         const keyPair = keyPairFromSeed(seed);
         return { keyPair, pubkeyHex: keyPair.publicKey.toString('hex') };
@@ -38,12 +39,12 @@ export function loadOrCreateAttestorIdentity(): AttestorIdentity {
     const seed = randomBytes(32);
     const keyPair = keyPairFromSeed(seed);
 
-    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
-    writeFileSync(
+    if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode:0o700 });
+    try {writeFileSync(
         IDENTITY_FILE,
         JSON.stringify({ seedHex: seed.toString('hex'), createdAt: new Date().toISOString() }, null, 2),
-        { mode: 0o600 }, // seed is sensitive — same posture as wallet.json
-    );
+        { mode: 0o600, flag:'wx' },
+    );}catch(error:any){if(error.code==='EEXIST')return loadOrCreateAttestorIdentity(directory);throw error;}
 
     return { keyPair, pubkeyHex: keyPair.publicKey.toString('hex') };
 }

@@ -1,3 +1,4 @@
+import {withComputeSlot,ComputeCapacityError} from '../security/compute.js';
 import { hashPin,verifyPin } from '../security/pin.js';
 import { nodeSurface } from '../security/surface.js';
 /**
@@ -443,12 +444,8 @@ export class OmegaGateway {
         return balance;
     }
 
-    private activeInference = 0;
     private async infer(...args: Parameters<NeuralRouter['route']>): Promise<RouteResult> {
-        const capacity=Math.max(1,Math.min(4,Number(process.env.GSTD_MAX_INFERENCE_CONCURRENCY)||1));
-        if(this.activeInference>=capacity)throw new Error('Compute capacity reached; retry later');
-        this.activeInference++;
-        try {return await this.router.route(...args);} finally {this.activeInference--;}
+        return withComputeSlot(()=>this.router.route(...args));
     }
 
     private setupAPI(): void {
@@ -932,6 +929,7 @@ export class OmegaGateway {
                     });
                 }
             } catch (err: any) {
+                if(err instanceof ComputeCapacityError){res.setHeader('Retry-After','5');res.status(429).json({error:{message:err.message,type:'capacity_error'}});return;}
                 console.error('[Gateway] Error:', err.message);
                 res.status(500).json({ error: { message: err.message, type: 'internal_error' } });
             }
@@ -4131,7 +4129,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                     installed: this.appManager.getInstalled?.()?.length || 0,
                 },
                 capabilities: {
-                    openclaw: true,
+                    openclaw: false,
                     swarm: true,
                     memory: !!this.subsystems?.memory,
                     dln: !!this.subsystems?.blockchain,
@@ -4744,12 +4742,12 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                         }));
                         this.platformLink.setCapabilitiesProvider(() => ({
                             models: this._availableModels,
-                            channels: ['telegram', 'webchat'],
+                            channels: ['webchat'],
                             apps: this.appManager.getInstalled?.()?.length || 0,
                             memory: !!this.subsystems?.memory,
-                            openclaw: true,
+                            openclaw: false,
                             dln: !!this.subsystems?.blockchain,
-                            maxConcurrentTasks: 5,
+                            maxConcurrentTasks: Math.max(1,Math.min(4,Number(process.env.GSTD_MAX_INFERENCE_CONCURRENCY)||1)),
                         }));
                         this.platformLink.start(4 * 60_000).catch(() => {});
                         this.platformLink.startTaskLoop(30_000); // idle polling; chats wake the existing worker

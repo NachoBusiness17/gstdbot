@@ -135,7 +135,7 @@ async function loadConfig(): Promise<NodeConfig> {
     const configPath = join(homedir(), '.config', 'gstdbot', 'config.json');
     const defaults: NodeConfig = {
         version: require('../package.json').version,
-        mode: (process.env.GSTD_MODE as any) || 'cloud',
+        mode: (process.env.GSTD_MODE as any) || 'sovereign',
         nodeId: process.env.GSTD_NODE_ID || `node-${hostname()}`,
         nodeName: process.env.NODE_NAME || `${hostname()}-node`,
         installDir: process.env.GSTD_INSTALL_DIR || join(homedir(), 'gstdbot'),
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
         console.log('');
     }
     console.log('  🐝  DePIN AI Compute Node — earn GSTD for inference');
-    console.log('  🐝  💾 Storage  💻 Compute  🧠 AI Inference  📡 Relay  🎓 Training');
+    console.log('  🐝  Local-first AI compute · signed paid work · platform payments');
     console.log('  🐝 ═══════════════════════════════════════════════════');
     console.log('');
 
@@ -287,28 +287,24 @@ async function main(): Promise<void> {
     const actualPort = gateway.getPort();
 
     // ── 2. Blockchain Manager (GSTD Wallet + Staking) ───────────
-    console.log(`  [2/${TOTAL_STEPS}] Initializing blockchain...`);
-    const blockchain = new BlockchainManager();
-    await blockchain.init();
+    console.log(`  [2/${TOTAL_STEPS}] Node custody and staking disabled...`);
+    const blockchain:BlockchainManager|null = inactive<BlockchainManager>();
 
     // ── 3. Revenue Engine (Unified 6-stream earnings) ───────────
-    console.log(`  [3/${TOTAL_STEPS}] Initializing Revenue Engine (6 streams)...`);
-    const revenue = new RevenueEngine(config.nodeId);
-    await revenue.init();
+    console.log(`  [3/${TOTAL_STEPS}] Local revenue estimates disabled...`);
+    const revenue:RevenueEngine|null = inactive<RevenueEngine>();
 
     // ── 4. Wallet Manager (Earnings Tracker) ────────────────────
     console.log(`  [4/${TOTAL_STEPS}] Starting wallet manager...`);
     const wallet = new NodeWallet(config);
     await wallet.init();
 
-    // Connect wallet to gateway → every query earns GSTD
+    // Link public payout address; only accepted paid platform work earns GSTD
     gateway.setWallet(wallet);
 
     // Connect revenue engine wallet
     const addr = wallet.getAddress();
-    if (addr) {
-        revenue.setWalletAddress(addr);
-    }
+    if (addr && revenue) revenue.setWalletAddress(addr);
 
     // Auto-save earnings every 5 minutes
     setInterval(() => { try { wallet.saveEarnings(); } catch (_e) {} }, 5 * 60 * 1000);
@@ -347,17 +343,8 @@ async function main(): Promise<void> {
 
     // ── 14. TON Connect + Mobile Node ────────────────────────────
     console.log(`  [14/${TOTAL_STEPS}] Initializing TON Connect...`);
-    const tonConnect = new TonConnectManager({
-        network: config.tonconnect.network,
-        bridgeUrl: config.tonconnect.bridgeUrl,
-        gstdJettonAddress: CONTRACTS.GSTD_TOKEN,
-    });
-    if (config.tonconnect.enabled) {
-        const mnemonic = process.env.GSTD_WALLET_MNEMONIC?.split(' ');
-        await tonConnect.init(mnemonic).catch(() => {});
-    } else {
-        console.log('    TON Connect: disabled (set GSTD_TONCONNECT=true)');
-    }
+    const tonConnect:TonConnectManager|null = inactive<TonConnectManager>();
+    console.log('    Custody signing, staking and local revenue estimates are disabled; use platform payments.');
 
     let mobileNode: MobileNodeManager | null = null;
     if (config.mobileNode.enabled) {
@@ -427,10 +414,7 @@ async function main(): Promise<void> {
         console.log(`  [17/${TOTAL_STEPS}] Starting P2P mesh network...`);
         // Load (or create) a stable Ed25519 keypair so the peerId survives restarts.
         // Without this every restart mints a new peerId, invalidating bootstrap addrs.
-        const p2pIdentity = await loadOrCreateP2PIdentity().catch((e: any) => {
-            console.warn(`    ⚠ Could not load P2P identity: ${e.message} — peerId will be ephemeral`);
-            return null;
-        });
+        const p2pIdentity = await loadOrCreateP2PIdentity();
         if (p2pIdentity && !p2pIdentity.isNew) {
             console.log(`    ✓ P2P identity loaded (stable peerId)`);
         }
@@ -498,16 +482,16 @@ async function main(): Promise<void> {
         console.log('  👉 Dashboard: http://localhost:' + dashPort);
         console.log('');
         console.log('  ── Platform Services ────────────────────────────');
-        console.log('  🤖 Telegram:    ✓ Bot active');
-        console.log('  🧠 AI Chat:     ✓ 8 models available');
+        console.log('  🤖 Telegram:    handled by the separate platform webhook');
+        console.log('  🧠 AI Chat:     local installed models only');
         console.log('  🧠 Memory:      ' + (memory.isConnected() ? 'L1+L2+L3' : 'L1 only'));
-        console.log('  💰 Wallet:      ' + (wallet.getAddress() || 'auto-generated'));
-        console.log('  🔗 TON Connect: ' + (tonConnect.isReady() ? '✓ ' + tonConnect.getAddress()?.slice(0,12) + '...' : 'ready'));
+        console.log('  💰 Wallet:      ' + (wallet.getAddress() || 'public payout address not configured'));
+        console.log('  🔗 TON Connect: ' + 'disabled — use platform payments');
         console.log('  📱 Mobile TMA:  ' + (mobileNode ? '✓ active' : 'disabled'));
         console.log('  ── Node Management (remote) ─────────────────────');
         console.log('  📡 Node API:    ✓ /nodes/* endpoints via backend');
         console.log('  🩺 Monitoring:  ✓ Health Monitor + Alerts via backend');
-        console.log('  ⚙️  Commands:    ✓ Remote dispatch (restart/deploy/diagnostics)');
+        console.log('  ⚙️  Host control: disabled');
         console.log('  🚫 Swarm:       DISABLED (platform mode)');
         console.log('  🚫 P2P/NaaS:    DISABLED (remote user nodes only)');
         console.log('');
@@ -541,9 +525,9 @@ async function main(): Promise<void> {
         console.log('  🎓 Training:    ' + (trainer ? ((trainer.getStats()?.activeJobs || 0) > 0 ? 'active' : 'idle') : 'disabled'));
         console.log('  ── Infrastructure ───────────────────────────────');
         console.log('  🐝 Swarm:       ' + (swarm?.isConnected() ? '✓ connected' : 'standalone'));
-        console.log('  💰 Wallet:      ' + (wallet.getAddress() || 'auto-generated'));
+        console.log('  💰 Wallet:      ' + (wallet.getAddress() || 'public payout address not configured'));
         console.log('  🧠 Memory:      ' + (memory.isConnected() ? 'L1+L2+L3' : 'L1 only'));
-        console.log('  🔗 TON Connect: ' + (tonConnect.isReady() ? '✓ ' + tonConnect.getAddress()?.slice(0,12) + '...' : 'ready'));
+        console.log('  🔗 TON Connect: ' + 'disabled — use platform payments');
         console.log('  📱 Mobile:      ' + (mobileNode ? '✓ TMA' : 'disabled'));
         console.log('  ⚡ HTTP Engine:  ' + (fastifyGateway ? 'Fastify (4x boost)' : 'Express'));
         console.log('  🌐 P2P Mesh:    ' + (p2pPeerId ? `✓ ${p2pPeerId.slice(0,16)}...` : 'platform-only'));
@@ -665,24 +649,20 @@ async function main(): Promise<void> {
             if (p2pNode) await p2pNode.stop();
             if (fastifyGateway) await fastifyGateway.close();
             if (mobileNode) await mobileNode.stop();
-            await tonConnect.close();
+            if(tonConnect)await tonConnect.close();
             if (naas) await naas.stop();
             if (trafficRelay) await trafficRelay.stop();
             if (computeMarket) await computeMarket.stop();
             if (storageVault) await storageVault.stop();
-            await revenue.stop();
+            if(revenue)await revenue.stop();
             if (trainer) await trainer.stop();
             if (resources) await resources.stop();
             if (remote) await remote.stop();
             await gateway.stop();
             if (swarm) await swarm.stop();
             await memory.close();
-            await blockchain.close();
+            if(blockchain)await blockchain.close();
             console.log('  ✅ Clean shutdown complete.');
-            if (!isPlatform) {
-                const revStats = revenue.getStats();
-                console.log(`  💰 Total earned: ${revStats.totalEarned.toFixed(4)} GSTD (${revStats.settlementsCount} settlements)`);
-            }
             clearTimeout(shutdownTimeout);
             process.exit(0);
         })();

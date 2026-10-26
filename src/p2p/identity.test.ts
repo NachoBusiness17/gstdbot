@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import {mkdtempSync,rmSync} from 'fs';
+import {tmpdir} from 'os';
+import {join} from 'path';
+const fixture=mkdtempSync(join(tmpdir(),'gstd-identity-tests-'));
+afterAll(()=>rmSync(fixture,{recursive:true,force:true}));
 import { signVerify } from '@ton/crypto';
 import { loadOrCreateAttestorIdentity, signPeerRequest, peerRequestMessage, isStaleTimestamp, verifyPeerRequest } from './identity.js';
 
 describe('signPeerRequest', () => {
-    const identity = loadOrCreateAttestorIdentity();
+    const identity = loadOrCreateAttestorIdentity(fixture);
     const nodeId = 'test-node-abc123';
 
     it('produces three correctly-named headers', () => {
@@ -57,7 +62,7 @@ describe('signPeerRequest', () => {
 });
 
 describe('verifyPeerRequest (end-to-end requirePeerAuth verification path)', () => {
-    const identity = loadOrCreateAttestorIdentity();
+    const identity = loadOrCreateAttestorIdentity(fixture);
     const nodeId = 'test-node-e2e';
 
     it('accepts a valid signed request', async () => {

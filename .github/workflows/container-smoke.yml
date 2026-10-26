@@ -1,0 +1,46 @@
+name: Offline container smoke
+on:
+  push:
+    branches: [main]
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/index.ts', 'src/cli/**', '.github/workflows/container-smoke.yml']
+  pull_request:
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/index.ts', 'src/cli/**', '.github/workflows/container-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: gstd-smoke:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Launch offline without host keys or production registration
+        run: docker run -d --network none --name gstd-smoke -e GSTD_MODE=platform gstd-smoke:local
+      - name: Verify non-root gateway, private operator routes and retired features
+        run: |
+          test "$(docker exec gstd-smoke id -u)" != "0"
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec gstd-smoke curl -fsS http://127.0.0.1:8080/health; then ready=true; break; fi
+            sleep 2
+          done
+          test "$ready" = true
+          test "$(docker exec gstd-smoke curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/stats)" = 401
+          test "$(docker exec gstd-smoke curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/system/ssh)" = 410
+          docker exec gstd-smoke node dist/cli/index.js --help
+          docker exec gstd-smoke node dist/cli/index.js doctor
+      - name: Diagnose failed test container
+        if: failure()
+        run: docker logs --tail 80 gstd-smoke
+      - name: Remove disposable test container
+        if: always()
+        run: docker rm -f gstd-smoke || true

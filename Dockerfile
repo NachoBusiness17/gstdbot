@@ -32,7 +32,6 @@ COPY --from=builder /app/dist/ ./dist/
 # Copy web dashboard & assets
 COPY web/ ./web/
 COPY scripts/ ./scripts/
-COPY skills/ ./skills/
 
 # Create data directory for persistent storage
 RUN mkdir -p /data/gstdbot /app/data && chown -R node:node /data/gstdbot /app/data
@@ -57,7 +56,7 @@ LABEL org.opencontainers.image.title="GSTD Node OS"
 LABEL org.opencontainers.image.description="Sovereign AI Node — earn GSTD by processing AI queries"
 LABEL org.opencontainers.image.url="https://app.gstdtoken.com"
 LABEL org.opencontainers.image.source="https://github.com/gstdcoin/gstdbot"
-LABEL org.opencontainers.image.version="3.6.0"
+LABEL org.opencontainers.image.version="3.6.1"
 LABEL org.opencontainers.image.vendor="GSTD"
 
 ENV NODE_OPTIONS="--no-deprecation"

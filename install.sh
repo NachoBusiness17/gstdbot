@@ -12,7 +12,7 @@
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-VERSION="3.6.0"
+VERSION="3.6.1"
 INSTALL_DIR="${GSTD_INSTALL_DIR:-$HOME/gstdbot}"
 CONFIG_DIR="$HOME/.config/gstdbot"
 STATE_FILE="$CONFIG_DIR/.install_state"
@@ -97,8 +97,8 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --fresh       Reset state and start fresh"
             echo "  --cloud       Cloud AI mode (default, instant, free)"
-            echo "  --hybrid      Hybrid mode (local + cloud)"
-            echo "  --sovereign   Fully local AI (requires ~10GB)"
+            echo "  --hybrid      Legacy compatibility flag; requests remain local by default"
+            echo "  --sovereign   Local-first compute (default)"
             echo "  --port=PORT   Dashboard port (default: 8080)"
             echo "  --help        Show this help"
             echo ""
@@ -124,7 +124,7 @@ cat << 'BANNER'
 
   ╔══════════════════════════════════════════════════╗
   ║   🐝 GSTD Node OS — Decentralized AI Compute     ║
-  ║      v3.5 • Inference + Fine-Tuning + NaaS       ║
+  ║      v3.6 • Local-first AI compute       ║
   ╚══════════════════════════════════════════════════╝
 
 BANNER
@@ -364,6 +364,19 @@ if [ ! -f "$INSTALL_DIR/.env" ] && [ -f "$INSTALL_DIR/.env.example" ]; then
     else
         warn "GSTD_WALLET_ADDRESS not set — set your public TON address as GSTD_WALLET_ADDRESS before accepting paid work"
     fi
+    GSTD_SETUP_ENV="$INSTALL_DIR/.env" GSTD_SETUP_TOKEN_FILE="$CONFIG_DIR/setup-token" node <<'NODESETUP'
+const fs=require('node:fs'),crypto=require('node:crypto');
+const envFile=process.env.GSTD_SETUP_ENV,tokenFile=process.env.GSTD_SETUP_TOKEN_FILE;
+let env=fs.readFileSync(envFile,'utf8');
+const token=fs.existsSync(tokenFile)?fs.readFileSync(tokenFile,'utf8').trim():crypto.randomBytes(32).toString('hex');
+if(!/^[a-f0-9]{64}$/.test(token))throw new Error('Invalid existing setup-token file; review it manually.');
+env=env.replace(/^GSTD_DASHBOARD_SETUP_TOKEN=.*$/m,'GSTD_DASHBOARD_SETUP_TOKEN='+token);
+if(!/^GSTD_DASHBOARD_SETUP_TOKEN=/m.test(env))env+='\nGSTD_DASHBOARD_SETUP_TOKEN='+token+'\n';
+if(!fs.existsSync(tokenFile))fs.writeFileSync(tokenFile,token+'\n',{mode:0o600,flag:'wx'});
+fs.chmodSync(tokenFile,0o600);
+fs.writeFileSync(envFile,env,{mode:0o600});fs.chmodSync(envFile,0o600);
+NODESETUP
+    info "Initial setup token saved locally: $CONFIG_DIR/setup-token (keep it private)"
     info ".env configured"
 fi
 

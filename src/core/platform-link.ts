@@ -1,3 +1,4 @@
+import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
 /**
  * ═══════════════════════════════════════════════════════════════
  * GSTD Node — Platform Link (Heartbeat + Registration)
@@ -346,7 +347,7 @@ export class PlatformLink extends EventEmitter {
     }
 
     private async pollAndProcess() {
-        if (this.tasksBusy || !this.registered) return;
+        if (this.tasksBusy || !this.registered || !computeCapacityAvailable()) return;
         this.tasksBusy = true;
         let phase = 'poll';
         try {
@@ -409,6 +410,7 @@ export class PlatformLink extends EventEmitter {
             const temperature = payload.temperature ?? task.temperature;
             phase = 'inference';
             const inferenceStarted = Date.now();
+            const aiData:any = await withComputeSlot(async()=>{
             const aiResp = await fetch(`${ollamaUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -424,7 +426,8 @@ export class PlatformLink extends EventEmitter {
                 signal: AbortSignal.timeout(90000),
             });
             if (!aiResp.ok) throw new Error(`Local inference failed: HTTP ${aiResp.status}`);
-            const aiData: any = await aiResp.json();
+            return await aiResp.json();
+            });
             const content = aiData?.message?.content;
             if (typeof content !== 'string' || !content.trim()) {
                 throw new Error('Local inference returned an empty response');

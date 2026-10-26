@@ -24,7 +24,8 @@ export interface P2PIdentity {
     isNew: boolean;
 }
 
-export async function loadOrCreateP2PIdentity(): Promise<P2PIdentity> {
+export async function loadOrCreateP2PIdentity(directory=process.env.GSTD_IDENTITY_DIR || join(homedir(),'.config','gstdbot')): Promise<P2PIdentity> {
+    const IDENTITY_PATH=join(directory,'p2p-identity.json');
     const { keys } = await import('@libp2p/crypto');
     const { peerIdFromPrivateKey } = await import('@libp2p/peer-id');
 
@@ -39,9 +40,8 @@ export async function loadOrCreateP2PIdentity(): Promise<P2PIdentity> {
                 const pubkeyHex = Buffer.from(peerId.publicKey?.raw ?? new Uint8Array()).toString('hex');
                 return { privateKey, pubkeyHex, isNew: false };
             }
-        } catch (e: any) {
-            console.warn(`[p2p-identity] Failed to load saved identity (${e.message}), generating new one`);
-        }
+        } catch {throw new Error('Saved P2P identity is corrupt; restore its backup. Refusing to replace it.');}
+        throw new Error('Saved P2P identity has an unsupported format; refusing to replace it.');
     }
 
     // ── Generate fresh identity ─────────────────────────────────────
@@ -51,11 +51,12 @@ export async function loadOrCreateP2PIdentity(): Promise<P2PIdentity> {
     const pubkeyHex = Buffer.from(peerId.publicKey?.raw ?? new Uint8Array()).toString('hex');
 
     try {
-        mkdirSync(join(homedir(), '.config', 'gstdbot'), { recursive: true });
-        writeFileSync(IDENTITY_PATH, JSON.stringify({ type: 'Ed25519', protobuf }, null, 2), { mode: 0o600 });
+        mkdirSync(directory, { recursive: true, mode:0o700 });
+        writeFileSync(IDENTITY_PATH, JSON.stringify({ type: 'Ed25519', protobuf }, null, 2), { mode: 0o600, flag:'wx' });
         console.log(`    ✓ P2P identity created → ${IDENTITY_PATH}`);
     } catch (e: any) {
-        console.warn(`[p2p-identity] Could not save identity: ${e.message} — peerId will change on next restart`);
+        if(e.code==='EEXIST')return loadOrCreateP2PIdentity(directory);
+        throw new Error('Could not persist P2P identity; refusing an ephemeral identity');
     }
 
     return { privateKey, pubkeyHex, isNew: true };
