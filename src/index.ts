@@ -315,17 +315,11 @@ async function main(): Promise<void> {
     await memory.init();
 
     // ── 6. Swarm Agent (P2P + Task Processing) ──────────────────
-    let swarm: SwarmAgent | null = null;
-    if (!isPlatform) {
-        console.log(`  [6/${TOTAL_STEPS}] Joining swarm network...`);
-        swarm = new SwarmAgent(config, wallet, memory);
-        swarm.setExternalInferencePolling(true);
-        if (swarm) swarm.setIdentity(identity);
-        if (swarm) swarm.setPeerManager(gateway.getPeerManager());
-        await swarm.start();
-    } else {
-        console.log('  [6/7] Swarm: SKIPPED (platform mode)');
-    }
+    // The signed PlatformLink worker is the only active assignment consumer.
+    // Legacy SwarmAgent also polled storage/verification queues and uploaded P2P
+    // responses to the platform; keep that research path out of the compute profile.
+    const swarm:SwarmAgent|null = inactive<SwarmAgent>();
+    console.log('    Signed inference worker active; legacy task consumer and quorum settlement disabled.');
 
     // ── Node-only subsystems (skipped in platform mode) ──────────
     let resources: ResourceSharing | null = inactive<ResourceSharing>();

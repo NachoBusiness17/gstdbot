@@ -2,10 +2,13 @@ name: Offline container smoke
 on:
   push:
     branches: [main]
-    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/index.ts', 'src/cli/**', '.github/workflows/container-smoke.yml']
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', '.github/workflows/container-smoke.yml']
   pull_request:
-    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/index.ts', 'src/cli/**', '.github/workflows/container-smoke.yml']
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', '.github/workflows/container-smoke.yml']
   workflow_dispatch:
+concurrency:
+  group: container-smoke-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
