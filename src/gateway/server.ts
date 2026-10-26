@@ -4666,7 +4666,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
             if (r.ok) {
                 const d: any = await r.json();
-                this._availableModels = (d.models || []).map((m: any) => m.name as string).filter(Boolean);
+                this._availableModels = (d.models || []).map((m: any) => m.name as string).filter((m:string)=>!!m&&!isCloudModel(m));
             }
         } catch (_) { /* Ollama not running yet */ }
     }

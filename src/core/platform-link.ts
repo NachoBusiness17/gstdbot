@@ -18,7 +18,6 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { cpus, totalmem } from 'os';
 import { verifyPlatformCommand, isStaleCommand, type PlatformCommand } from '../lib/platform-auth.js';
-import { isRegistered } from '../lib/model-registry.js';
 import { loadOrCreateAttestorIdentity, signPeerRequest, signWithIdentity, type AttestorIdentity } from '../p2p/identity.js';
 
 export interface NodeCapabilities {
@@ -247,7 +246,6 @@ export class PlatformLink extends EventEmitter {
                     uptime_hours:    Math.round(process.uptime() / 3600),
                     queries_served:  stats.queryCount || 0,
                     capabilities:    models,
-                    models_loaded:   models.filter(m => isRegistered(m)),
                     mode:            'node',
                     ...(tunnelUrl && { node_url: tunnelUrl }),
                     ...(this.p2pPeerId && { peer_id: this.p2pPeerId }),

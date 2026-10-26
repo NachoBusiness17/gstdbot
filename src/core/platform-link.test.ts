@@ -291,3 +291,15 @@ describe('PlatformLink reward wallet commands',()=>{
   expect(pl.getStatus().walletAddress).toBe('EQtest');
  });
 });
+
+describe('modern model advertisement',()=>{
+ it('advertises every installed local model without labelling a static allowlist as loaded VRAM',async()=>{
+  const pl=makePL();(pl as any).registered=true;
+  pl.setCapabilitiesProvider(()=>({models:['qwen3.5:0.8b'],channels:[],apps:0,memory:false,openclaw:false,dln:false,maxConcurrentTasks:1}));
+  const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({peers_online:1})));vi.stubGlobal('fetch',fetcher);
+  await (pl as any).runHeartbeat();
+  const body=JSON.parse((fetcher.mock.calls[0] as any)[1].body);
+  expect(body.capabilities).toEqual(['qwen3.5:0.8b']);
+  expect(body.models_loaded).toBeUndefined();
+ });
+});
