@@ -540,7 +540,7 @@ export class OmegaGateway {
                 const synced = await this.platformLink.syncRegistration();
                 res.status(synced ? 200 : 202).json({address, platform_synced:synced});
             } catch (error: any) {
-                res.status(error.message === 'payout_migration_required' ? 409 : 400).json({error:error.message});
+                res.status(error.message === 'payout_migration_required' ? 409 : 400).json({error:error.message === 'payout_migration_required' ? error.message : 'invalid_ton_address'});
             }
         });
 
