@@ -14,6 +14,7 @@ import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
 
 import { EventEmitter } from 'events';
 import { readFileSync } from 'fs';
+import { cpus, totalmem } from 'os';
 import { verifyPlatformCommand, isStaleCommand, type PlatformCommand } from '../lib/platform-auth.js';
 import { isRegistered } from '../lib/model-registry.js';
 import { loadOrCreateAttestorIdentity, signPeerRequest, type AttestorIdentity } from '../p2p/identity.js';
@@ -149,6 +150,9 @@ export class PlatformLink extends EventEmitter {
                         version: this.version,
                         platform: process.platform,
                         arch: process.arch,
+                        mode: 'node',
+                        cpu_cores: cpus().length,
+                        ram_total_mb: Math.round(totalmem() / 1024 / 1024),
                         capabilities: caps,
                     },
                 }),
