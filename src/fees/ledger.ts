@@ -1,18 +1,7 @@
 /**
- * GSTD Fee Ledger — decentralized fee collection & distribution
- *
- * Every operation in the GSTD network has a fee:
- *   AI inference:  0.001 GSTD / request
- *   Storage:       0.01  GSTD / MB / day
- *   Relay:         0.005 GSTD / GB
- *
- * Each fee is split:
- *   90% → Node operator (who processed the request)
- *   10% → Protocol Treasury (accumulates → liquidity + buybacks)
- *
- * Ledger is stored locally in fees_ledger.json.
- * No external API needed. Settlement to TON happens in batches
- * when the treasury wallet is configured.
+ * Local usage instrumentation only.
+ * This file does not create backed GSTD balances, rewards or on-chain receipts.
+ * Real money uses the platform ledger with one 85/10/5 accepted-work split.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -22,12 +11,6 @@ const LEDGER_FILE = join(
     process.env.GSTD_CONFIG_DIR || '/home/bot/.config/gstdbot',
     'fees_ledger.json'
 );
-
-// ─── Split ratios ─────────────────────────────────────────────────
-const SPLIT = {
-    node_operator: 0.90,   // 90% to the node that served the request
-    treasury:      0.10,   // 10% to protocol treasury
-};
 
 // ─── Fee rates (GSTD) ─────────────────────────────────────────────
 export const FEE_RATES = {
@@ -125,8 +108,9 @@ export class FeeLedger {
     // ─── Core ─────────────────────────────────────────────────────
 
     private record(type: FeeType, total: number, description: string, metadata: Record<string, any>): FeeEvent {
-        const node_operator = Math.round(total * SPLIT.node_operator * 1e6) / 1e6;
-        const treasury      = Math.round(total * SPLIT.treasury      * 1e6) / 1e6;
+        const node_operator = 0; // Unfunded local activity is usage only, never a token claim.
+        const treasury = 0;
+        total = 0;
 
         const event: FeeEvent = {
             id:            `${type}_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
@@ -144,9 +128,7 @@ export class FeeLedger {
         this.byType[type].total   += total;
         this.byType[type].events  += 1;
 
-        if (node_operator > 0) {
-            this.onNodeEarning?.(node_operator, type);
-        }
+
 
         if (this.events.length % 10 === 0) this.save();
 
@@ -157,35 +139,25 @@ export class FeeLedger {
 
     getStats(): ReserveStats {
         return {
-            treasury_gstd:      Math.round(this.totals.treasury      * 1e6) / 1e6,
-            node_earnings_gstd: Math.round(this.totals.node_operator * 1e6) / 1e6,
-            total_fees_gstd:    Math.round(this.totals.total         * 1e6) / 1e6,
+            treasury_gstd:      0, // Local activity is not backed monetary accounting.
+            node_earnings_gstd: 0, // Local activity is not backed monetary accounting.
+            total_fees_gstd:    0, // Local activity is not backed monetary accounting.
             total_events:       this.events.length,
             by_type:            { ...this.byType },
-            settled_gstd:       Math.round(this.totals.settled       * 1e6) / 1e6,
-            pending_gstd:       Math.round((this.totals.treasury - this.totals.settled) * 1e6) / 1e6,
+            settled_gstd:       0, // Local activity is not backed monetary accounting.
+            pending_gstd:       0, // Local activity is not backed monetary accounting.
             first_event:        this.events[0]?.timestamp,
             last_event:         this.events[this.events.length - 1]?.timestamp,
         };
     }
 
     getRecentEvents(limit = 50): FeeEvent[] {
-        return this.events.slice(-limit).reverse();
+        return this.events.slice(-limit).reverse().map(event=>({...event,total:0,node_operator:0,treasury:0,metadata:{...event.metadata,legacy_estimate_gstd:event.total,monetary_claim:false}}));
     }
 
     /** Mark treasury portion as settled (sent to TON) */
-    markSettled(amount: number, txHash: string): void {
-        this.totals.settled += amount;
-        let remaining = amount;
-        for (let i = this.events.length - 1; i >= 0 && remaining > 0; i--) {
-            const e = this.events[i];
-            if (!e.settled_chain) {
-                e.settled_chain = true;
-                e.tx_hash = txHash;
-                remaining -= e.treasury;
-            }
-        }
-        this.save();
+    markSettled(_amount: number, _txHash: string): void {
+        throw new Error('Local usage estimates cannot be settled as tokens; use the backed platform ledger.');
     }
 
     // ─── Persistence ──────────────────────────────────────────────

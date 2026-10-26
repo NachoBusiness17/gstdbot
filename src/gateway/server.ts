@@ -1,3 +1,5 @@
+import { hashPin,verifyPin } from '../security/pin.js';
+import { nodeSurface } from '../security/surface.js';
 /**
  * GSTD Bot — Omega Gateway + Node OS
  * 
@@ -129,7 +131,7 @@ function getLocalIP(): string {
 // ─── Activity Log (persisted to file) ────────────────────────────
 const activityLog: { ts: string; msg: string; type: string }[] = [];
 const MAX_LOG = 200;
-const LOG_DIR = join(require('os').homedir(), '.config', 'gstdbot');
+const LOG_DIR = process.env.GSTD_CONFIG_DIR || join(require('os').homedir(), '.config', 'gstdbot');
 const LOG_FILE = join(LOG_DIR, 'activity.log');
 
 // Load previous log on startup
@@ -152,9 +154,7 @@ export function logActivity(msg: string, type: string = 'info'): void {
 }
 
 // ─── PIN Hashing Helpers ─────────────────────────────────────────
-function hashPin(pin: string): string {
-    return createHash('sha256').update(pin + 'gstd-node-salt-2026').digest('hex');
-}
+
 function generateToken(): string {
     return randomBytes(32).toString('hex');
 }
@@ -443,10 +443,25 @@ export class OmegaGateway {
         return balance;
     }
 
+    private activeInference = 0;
+    private async infer(...args: Parameters<NeuralRouter['route']>): Promise<RouteResult> {
+        const capacity=Math.max(1,Math.min(4,Number(process.env.GSTD_MAX_INFERENCE_CONCURRENCY)||1));
+        if(this.activeInference>=capacity)throw new Error('Compute capacity reached; retry later');
+        this.activeInference++;
+        try {return await this.router.route(...args);} finally {this.activeInference--;}
+    }
+
     private setupAPI(): void {
+        this.app.use((req,res,next)=>{
+            const access=nodeSurface(req.path);
+            res.setHeader('Cache-Control','no-store');
+            if(access==='retired') { res.status(410).json({error:'feature_retired',profile:'compute',message:'This node serves AI compute only.'}); return; }
+            if(access==='operator' && !requireNodeAuth(req,res)) return;
+            next();
+        });
         // JSON body parser with error handler (fix #15)
         this.app.use((req, res, next) => {
-            express.json({ limit: '10mb' })(req, res, (err) => {
+            express.json({ limit: '512kb' })(req, res, (err) => {
                 if (err) {
                     res.status(400).json({ error: 'Invalid JSON body', details: err.message });
                     return;
@@ -666,7 +681,7 @@ export class OmegaGateway {
                 const data: any = await resp.json();
                 // ─── Charge fee ────────────────────────────────
                 const tokens = data.usage?.completion_tokens || 0;
-                this.feeLedger.chargeInference(model, tokens);
+                // Free/direct inference records usage, not monetary earnings.
                 res.json(data);
             } catch (e: any) {
                 res.status(503).json({ error: e.message });
@@ -843,14 +858,15 @@ export class OmegaGateway {
 
         this.app.post('/v1/chat/completions', async (req, res) => {
             try {
-                const { model, messages, stream = false, max_tokens, temperature } = req.body;
+                const { model, messages, stream = false, max_tokens, temperature, privacy = 'local' } = req.body;
                 const inferenceOptions = {
+                    privacy: privacy === 'network' ? 'network' as const : 'local' as const,
                     ...(Number.isSafeInteger(max_tokens) && max_tokens > 0 && max_tokens <= 8192 ? { maxTokens: max_tokens } : {}),
                     ...(typeof temperature === 'number' && Number.isFinite(temperature) && temperature >= 0 && temperature <= 2 ? { temperature } : {}),
                 };
                 this.metrics.totalRequests++;
 
-                const result = await this.router.route(model || 'auto', messages, undefined, inferenceOptions);
+                const result = await this.infer(model || 'auto', messages, undefined, inferenceOptions);
                 this.updateMetrics(result);
 
                 if (stream) {
@@ -1073,7 +1089,7 @@ export class OmegaGateway {
                     ...messages,
                 ];
 
-                const result = await this.router.route(model || 'auto', enrichedMessages);
+                const result = await this.infer(model || 'auto', enrichedMessages);
                 this.updateMetrics(result);
                 res.json({
                     choices: [{ message: { role: 'assistant', content: result.content } }],
@@ -1201,7 +1217,7 @@ export class OmegaGateway {
                     },
                     ...messages.filter((m: any) => m?.role && m?.content),
                 ];
-                const result = await this.router.route('auto', enrichedMessages as any);
+                const result = await this.infer('auto', enrichedMessages as any);
                 res.json({
                     id: `gstd-free-${Date.now()}`,
                     object: 'chat.completion',
@@ -1219,7 +1235,7 @@ export class OmegaGateway {
     // ─── Node OS: Dashboard + App Store + System APIs ────────────
     private setupNodeOS(): void {
         // ─── Dashboard PIN Authentication (Secure) ───────────────
-        const configDir = join(require('os').homedir(), '.config', 'gstdbot');
+        const configDir = process.env.GSTD_CONFIG_DIR || join(require('os').homedir(), '.config', 'gstdbot');
         const pinFile = join(configDir, 'dashboard_pin.hash'); // .hash not .txt
         const oldPinFile = join(configDir, 'dashboard_pin.txt');
         const setupToken = process.env.GSTD_DASHBOARD_SETUP_TOKEN || '';
@@ -1265,8 +1281,8 @@ export class OmegaGateway {
                 return;
             }
             const { pin } = req.body || {};
-            if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
-                res.status(400).json({ success: false, error: 'PIN must be 4-8 digits' });
+            if (typeof pin !== 'string' || !/^\d{8,12}$/.test(pin)) {
+                res.status(400).json({ success: false, error: 'PIN must be 8-12 digits' });
                 return;
             }
             try {
@@ -1301,7 +1317,11 @@ export class OmegaGateway {
                 res.status(400).json({ success: false, error: 'PIN not configured. Use /api/auth/setup first.' });
                 return;
             }
-            if (hashPin(pin || '') === pinHash) {
+            if (verifyPin(pin || '',pinHash)) {
+                if(!pinHash.startsWith('scrypt$')){
+                    pinHash=hashPin(pin);
+                    writeFileSync(pinFile,pinHash,{encoding:'utf8',mode:0o600});
+                }
                 recordLoginAttempt(ip, true);
                 const token = createAuthToken();
                 logActivity('Dashboard login successful', 'success');
@@ -1321,7 +1341,7 @@ export class OmegaGateway {
                 res.json({ authenticated: false, needs_setup: true });
                 return;
             }
-            if (isLocal || isValidToken(token)) {
+            if (isValidToken(token)) {
                 res.json({ authenticated: true, local: isLocal });
             } else {
                 res.status(401).json({ authenticated: false });
@@ -1350,13 +1370,13 @@ export class OmegaGateway {
                 res.status(400).json({ success: false, error: 'current_pin and new_pin required' });
                 return;
             }
-            if (hashPin(current_pin) !== pinHash) {
+            if (!verifyPin(current_pin,pinHash)) {
                 logActivity('Failed PIN change attempt (wrong current PIN)', 'warn');
                 res.status(403).json({ success: false, error: 'Current PIN is incorrect' });
                 return;
             }
-            if (new_pin.length < 4 || new_pin.length > 8) {
-                res.status(400).json({ success: false, error: 'New PIN must be 4-8 digits' });
+            if (typeof new_pin!=='string' || !/^\d{8,12}$/.test(new_pin)) {
+                res.status(400).json({ success: false, error: 'New PIN must be 8-12 digits' });
                 return;
             }
             pinHash = hashPin(new_pin);
@@ -1442,7 +1462,7 @@ export class OmegaGateway {
                 return;
             }
             if (newPin.length < 4 || newPin.length > 8) {
-                res.status(400).json({ error: 'PIN must be 4-8 digits' });
+                res.status(400).json({ error: 'PIN must be 8-12 digits' });
                 return;
             }
             pinHash = hashPin(newPin);
@@ -2395,7 +2415,7 @@ export class OmegaGateway {
                     ...(history || []),
                     { role: 'user', content: message },
                 ];
-                const result = await this.router.route('auto', messages);
+                const result = await this.infer('auto', messages);
                 res.json({
                     reply: result.content || '',
                     model: result.model || 'auto',
@@ -2891,7 +2911,7 @@ export class OmegaGateway {
             checks.push({ name: 'Memory', status: memUsage > 90 ? 'critical' : memUsage > 75 ? 'warning' : 'ok', message: `${memUsage}% used` });
 
             // 6. Config integrity
-            const configDir = join(require('os').homedir(), '.config', 'gstdbot');
+            const configDir = process.env.GSTD_CONFIG_DIR || join(require('os').homedir(), '.config', 'gstdbot');
             checks.push({ name: 'Config Directory', status: existsSync(configDir) ? 'ok' : 'warning', message: configDir });
 
             // 7. Log file size
@@ -2978,7 +2998,7 @@ export class OmegaGateway {
             }
             logActivity('FULL SYSTEM RESET requested', 'warn');
             try {
-                const configDir = join(require('os').homedir(), '.config', 'gstdbot');
+                const configDir = process.env.GSTD_CONFIG_DIR || join(require('os').homedir(), '.config', 'gstdbot');
                 execSync(`rm -rf ${configDir}`, { timeout: 5000 });
                 execSync(`mkdir -p ${configDir}`, { timeout: 5000 });
                 const cwd = join(__dirname, '../..');
@@ -3865,7 +3885,11 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
     }
 
     private setupWebSocket(): void {
-        this.wss = new WebSocketServer({ server: this.server, path: '/ws' });
+        this.wss = new WebSocketServer({ server: this.server, path: '/ws', maxPayload: 64*1024,
+            verifyClient: (info: { req: http.IncomingMessage }) => {
+                const token=String(info.req.headers.authorization || '').replace(/^Bearer /,'');
+                return this.clients.size<64 && isValidToken(token);
+            } });
 
         this.wss.on('connection', (ws, _req) => {
             const clientId = uuid();
@@ -3908,10 +3932,11 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                 ];
 
                 session.history.push({ role: 'user', content: msg.content });
+                if(session.history.length>40)session.history=session.history.slice(-40);
 
                 ws.send(JSON.stringify({ type: 'thinking', model: msg.model || 'auto' }));
 
-                const result = await this.router.route(msg.model || 'auto', messages);
+                const result = await this.infer(msg.model || 'auto', messages);
                 this.metrics.totalRequests++;
                 this.updateMetrics(result);
 
@@ -3934,11 +3959,7 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             }
 
             case 'skill_install': {
-                ws.send(JSON.stringify({
-                    type: 'skill_installed',
-                    skillId: msg.skillId,
-                    status: 'ok',
-                }));
+                ws.send(JSON.stringify({type:'error',error:'feature_retired',message:'Arbitrary skill installation is not part of this compute profile.'}));
                 break;
             }
 

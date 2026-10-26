@@ -1,7 +1,7 @@
 {
   "name": "gstdbot",
-  "version": "3.5.8",
-  "description": "GSTD node software: registration, heartbeats, AI inference tasks, wallet accounting and an experimental sovereign verified-task core.",
+  "version": "3.6.0",
+  "description": "GSTD compute node: local-first AI, authenticated operator controls and funded-work accounting.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

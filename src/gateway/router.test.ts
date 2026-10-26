@@ -15,13 +15,13 @@ describe('NeuralRouter canonical task queue', () => {
     vi.stubGlobal('fetch',request);
     const router = new NeuralRouter('',false);
     const messages = [{role:'user' as const,content:'hello'}];
-    const pending = router.route('llama3.2:3b', messages, undefined, {maxTokens:12,temperature:0});
+    const pending = router.route('llama3.2:3b', messages, undefined, {maxTokens:12,temperature:0,privacy:'network'});
     await vi.advanceTimersByTimeAsync(2001);
     expect(await pending).toMatchObject({content:'real answer',nodeId:'worker',tier:'gstd'});
-    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({
+    expect(JSON.parse(request.mock.calls[2][1].body)).toEqual({
       type:'inference',payload:{model:'llama3.2:3b',prompt:JSON.stringify(messages),max_tokens:12,temperature:0,telegram_id:0},
     });
-    expect(request.mock.calls[2][0]).toContain('/tasks/result?task_id=task%2F1');
+    expect(request.mock.calls[3][0]).toContain('/tasks/result?task_id=task%2F1');
   });
   it('does not reuse an answer across different conversation context or models', async () => {
     const request = vi.fn().mockImplementation(async (url: string) =>
@@ -32,18 +32,18 @@ describe('NeuralRouter canonical task queue', () => {
     const router = new NeuralRouter('',false);
     const first = [{role:'system' as const,content:'context one'},{role:'user' as const,content:'same question'}];
     const second = [{role:'system' as const,content:'context two'},{role:'user' as const,content:'same question'}];
-    await router.route('llama3.2:3b',first);
-    expect((await router.route('llama3.2:3b',first)).tier).toBe('cache');
-    expect((await router.route('llama3.2:3b',second)).tier).toBe('gstd');
-    expect((await router.route('other:model',second)).tier).toBe('gstd');
-    expect(request).toHaveBeenCalledTimes(6);
+    await router.route('llama3.2:3b',first,undefined,{cache:true});
+    expect((await router.route('llama3.2:3b',first,undefined,{cache:true})).tier).toBe('cache');
+    expect((await router.route('llama3.2:3b',second,undefined,{cache:true})).tier).toBe('gstd');
+    expect((await router.route('other:model',second,undefined,{cache:true})).tier).toBe('gstd');
+    expect(request).toHaveBeenCalledTimes(3);
   });
   it('preserves the requested generation limits on local fallback', async () => {
-    const request = vi.fn().mockResolvedValueOnce(response({active_workers:0})).mockResolvedValueOnce(response({
+    const request = vi.fn().mockResolvedValueOnce(response({
       message:{content:'short answer'},
     }));
     vi.stubGlobal('fetch',request);
     await new NeuralRouter('',false).route('llama3.2:3b',[{role:'user',content:'hello'}],undefined,{maxTokens:9,temperature:0});
-    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({options:{num_ctx:2048,num_predict:9,temperature:0},keep_alive:-1});
+    expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({options:{num_ctx:2048,num_predict:9,temperature:0},keep_alive:-1});
   });
 });

@@ -16,7 +16,7 @@ if (typeof (Promise as any).withResolvers !== 'function') {
  *
  * ═══════════════════════════════════════════════════════
  * DePIN AI Compute Node — Earn GSTD for AI inference:
- *   🧠 AI Inference      — earn GSTD for answering queries (90% of fee)
+ *   🧠 AI Inference      — earn GSTD for answering queries (85% of funded accepted work)
  *   💾 Storage Provider  — earn GSTD for hosting data [optional]
  *   💻 GPU Compute       — earn GSTD for running jobs [optional]
  *   📡 Traffic Relay     — earn GSTD for proxying traffic [optional]
@@ -49,8 +49,6 @@ import { isRegistered, getEntry, modelFitsInRam } from './lib/model-registry.js'
 import { detectOdysseus } from './odysseus/detector.js';
 import { SecurityHardening } from './security/hardening.js';
 import { SwarmOrchestrator } from './swarm/orchestrator.js';
-import { TelegramChannel } from './channels/telegram.js';
-import { GstdAiBot } from './channels/gstdai.js';
 import { SwarmAgent } from './swarm/agent.js';
 import { CollectiveMemory } from './memory/collective.js';
 import { NodeWallet } from './wallet/manager.js';
@@ -76,6 +74,9 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 50;
+
+// Archived subsystems are inert in the compute profile.
+function inactive<T>(): T | null { return null; }
 
 // ─── AI Backend Model Detection ─────────────────────────────────
 // Returns the list of models this node can actually serve.
@@ -156,10 +157,10 @@ async function loadConfig(): Promise<NodeConfig> {
         memory: {
             redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
             chromaUrl: process.env.CHROMA_URL || 'http://localhost:8000',
-            enabled: process.env.GSTD_MEMORY !== 'false',
+            enabled: process.env.GSTD_MEMORY === 'true',
         },
         apps: {
-            enabled: process.env.GSTD_APPS !== 'false',
+            enabled: false,
             dataDir: join(homedir(), '.config', 'gstdbot', 'apps'),
         },
         tonconnect: {
@@ -168,7 +169,7 @@ async function loadConfig(): Promise<NodeConfig> {
             bridgeUrl: process.env.TON_BRIDGE_URL || 'https://connect.ton.org/bridge',
         },
         mobileNode: {
-            enabled: process.env.GSTD_MOBILE_NODE !== 'false',
+            enabled: false,
         },
     };
 
@@ -185,8 +186,9 @@ async function loadConfig(): Promise<NodeConfig> {
                 version: defaults.version,
                 swarm: { ...defaults.swarm, ...file.swarm, apiUrl },
                 dashboard: { ...defaults.dashboard, ...file.dashboard },
-                memory: { ...defaults.memory, ...file.memory },
-                apps: { ...defaults.apps, ...file.apps },
+                memory: { ...defaults.memory, ...file.memory, enabled:process.env.GSTD_MEMORY==='true' },
+                apps: { ...defaults.apps, enabled:false },
+                mobileNode: {enabled:false},
             };
             return merged;
         } catch (_e) { }
@@ -330,112 +332,18 @@ async function main(): Promise<void> {
     }
 
     // ── Node-only subsystems (skipped in platform mode) ──────────
-    let resources: ResourceSharing | null = null;
-    let trainer: SwarmTrainer | null = null;
-    let storageVault: StorageVault | null = null;
-    let computeMarket: ComputeMarketplace | null = null;
-    let trafficRelay: TrafficRelay | null = null;
-    let naas: NaaSManager | null = null;
+    let resources: ResourceSharing | null = inactive<ResourceSharing>();
+    let trainer: SwarmTrainer | null = inactive<SwarmTrainer>();
+    let storageVault: StorageVault | null = inactive<StorageVault>();
+    let computeMarket: ComputeMarketplace | null = inactive<ComputeMarketplace>();
+    let trafficRelay: TrafficRelay | null = inactive<TrafficRelay>();
+    let naas: NaaSManager | null = inactive<NaaSManager>();
 
-    if (!isPlatform) {
-        // ── 7. Resource Sharing ─────────────────────────────────────
-        if (process.env.GSTD_SHARING_ENABLED === 'true') {
-            console.log(`  [7/${TOTAL_STEPS}] Enabling resource sharing...`);
-            resources = new ResourceSharing(config, wallet.getAddress() || '');
-            await resources.init();
-        } else {
-            console.log(`  [7/${TOTAL_STEPS}] Resource sharing: disabled (set GSTD_SHARING_ENABLED=true)`);
-        }
+    console.log('    Compute profile: arbitrary jobs, training, relay, storage markets and NaaS are retired.');
 
-        // ── 8. Federated Training ─── disabled by default (Phase 2) ──
-        if (process.env.GSTD_TRAINING_ENABLED === 'true') {
-            console.log(`  [8/${TOTAL_STEPS}] Initializing training engine...`);
-            trainer = new SwarmTrainer(config);
-            await trainer.init();
-        } else {
-            console.log(`  [8/${TOTAL_STEPS}] Federated training: disabled (set GSTD_TRAINING_ENABLED=true)`);
-        }
-
-        // ── 9. Storage Vault ─── disabled by default (Phase 2) ────────
-        if (process.env.GSTD_STORAGE_ENABLED === 'true') {
-            console.log(`  [9/${TOTAL_STEPS}] Initializing Storage Vault...`);
-            storageVault = new StorageVault(config.nodeId);
-            storageVault.setRevenueEngine(revenue);
-            await storageVault.init();
-        } else {
-            console.log(`  [9/${TOTAL_STEPS}] Storage vault: disabled (set GSTD_STORAGE_ENABLED=true)`);
-        }
-
-        // ── 10. Compute Marketplace ─── disabled by default (Phase 2) ─
-        if (process.env.GSTD_COMPUTE_ENABLED === 'true') {
-            console.log(`  [10/${TOTAL_STEPS}] Initializing Compute Marketplace...`);
-            computeMarket = new ComputeMarketplace(config.nodeId);
-            computeMarket.setRevenueEngine(revenue);
-            await computeMarket.init();
-        } else {
-            console.log(`  [10/${TOTAL_STEPS}] Compute marketplace: disabled (set GSTD_COMPUTE_ENABLED=true)`);
-        }
-
-        // ── 11. Traffic Relay ─── disabled by default (Phase 2) ───────
-        if (process.env.GSTD_RELAY_ENABLED === 'true') {
-            console.log(`  [11/${TOTAL_STEPS}] Initializing Traffic Relay...`);
-            trafficRelay = new TrafficRelay(config.nodeId);
-            trafficRelay.setRevenueEngine(revenue);
-            (trafficRelay as any).setFeeLedger(gateway.getFeeLedger());
-            await trafficRelay.init();
-            trafficRelay.mountRoutes(gateway.getExpressApp());
-        } else {
-            console.log(`  [11/${TOTAL_STEPS}] Traffic relay: disabled (set GSTD_RELAY_ENABLED=true)`);
-        }
-
-        // ── 12. NaaS (Node-as-a-Service) ─── disabled by default (Phase 3) ─
-        if (process.env.GSTD_NAAS_ENABLED === 'true') {
-            console.log(`  [12/${TOTAL_STEPS}] Initializing NaaS (Multi-Chain RPC)...`);
-            naas = new NaaSManager();
-            const apiKey = process.env.GSTD_API_KEY || wallet.getAddress() || config.nodeId;
-            await naas.start(apiKey);
-        } else {
-            console.log(`  [12/${TOTAL_STEPS}] NaaS: disabled (set GSTD_NAAS_ENABLED=true)`);
-        }
-    } else {
-        console.log('  [7/7] Node subsystems: SKIPPED (platform mode)');
-        console.log('    ↳ Resource Sharing, Training, Storage, Compute, Relay, NaaS — disabled by default');
-    }
-
-    // ── 13. Remote Access + Channels ────────────────────────────
-    let remote: RemoteAccessManager | null = null;
-    if (!isPlatform) {
-        console.log(`  [13/${TOTAL_STEPS}] Setting up remote access...`);
-        remote = new RemoteAccessManager(config.nodeId);
-        await remote.init();
-    }
-
-    const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-    if (telegramToken) {
-        const telegram = new TelegramChannel({
-            botToken: telegramToken,
-            swarmUrl: process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
-            cocoonEnabled: process.env.GSTD_COCOON_ENABLED !== 'false',
-            adminIds: (process.env.TELEGRAM_ADMIN_IDS || '').split(',').filter(Boolean).map(Number),
-            communityChat: process.env.TELEGRAM_COMMUNITY_CHAT ? parseInt(process.env.TELEGRAM_COMMUNITY_CHAT) : undefined,
-        });
-        await telegram.start();
-    } else {
-        console.log('    Telegram: disabled (no token)');
-    }
-
-    // ── @gstdaibot — clean AI bot ────────────────────────────────────────────
-    const gstdAiToken = process.env.GSTDAI_BOT_TOKEN;
-    if (gstdAiToken) {
-        const gstdAiBot = new GstdAiBot(
-            gstdAiToken,
-            process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com',
-        );
-        await gstdAiBot.start();
-        console.log('    @gstdaibot: started');
-    } else {
-        console.log('    @gstdaibot: disabled (no GSTDAI_BOT_TOKEN)');
-    }
+    // Nodes hold no Telegram bot token and run no remote-control channel.
+    const remote: RemoteAccessManager | null = inactive<RemoteAccessManager>();
+    console.log('    Remote host control and legacy Telegram daemons: disabled (platform bot only).');
 
     // ── 14. TON Connect + Mobile Node ────────────────────────────
     console.log(`  [14/${TOTAL_STEPS}] Initializing TON Connect...`);
@@ -577,7 +485,7 @@ async function main(): Promise<void> {
     const bootTime = ((Date.now() - startTime) / 1000).toFixed(1);
     const dashPort = actualPort;
 
-    let uptimeDaemon: UptimeDaemon | null = null;
+    let uptimeDaemon: UptimeDaemon | null = inactive<UptimeDaemon>();
 
     if (isPlatform) {
         // ── Platform mode boot banner ────────────────────────────
@@ -652,10 +560,8 @@ async function main(): Promise<void> {
 
         logActivity('GSTD Node OS v' + config.version + ' booted in ' + bootTime + 's', 'success');
 
-        // ── Uptime Daemon (Proof-of-Uptime + NaaS commands) ──────────
-        uptimeDaemon = new UptimeDaemon(config.nodeId, wallet.getAddress() || '');
-        uptimeDaemon.start();
-        console.log(`  🔒 Uptime:      ✓ Proof-of-Uptime daemon (Age Multiplier: ${uptimeDaemon.getMultiplier()}x)`);
+        // Presence alone cannot create reward claims or execute remote NaaS commands.
+        console.log('    Rewards: accepted funded work only, 85/10/5; no uptime multiplier.');
     }
 
     // ── Safe Auto-update: check every hour ─────────────────────────
@@ -738,8 +644,8 @@ async function main(): Promise<void> {
     };
 
     // Check for updates after 2 min, then every hour
-    const updateStartTimer = setTimeout(checkAndUpdate, 2 * 60 * 1000);
-    const updateInterval = setInterval(checkAndUpdate, 60 * 60 * 1000);
+    const updateStartTimer = process.env.GSTD_AUTO_UPDATE === 'true' ? setTimeout(checkAndUpdate, 2 * 60 * 1000) : undefined;
+    const updateInterval = process.env.GSTD_AUTO_UPDATE === 'true' ? setInterval(checkAndUpdate, 60 * 60 * 1000) : undefined;
 
     // ── Graceful shutdown ───────────────────────────────────────
     let shutdownPromise: Promise<void> | null = null;

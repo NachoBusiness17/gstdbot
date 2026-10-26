@@ -13,7 +13,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { logActivity } from '../gateway/server.js';
 import type { NodeConfig } from '../index.js';
-import { initWallet, type WalletConfig } from './wallet.js';
+import type { WalletConfig } from './wallet.js';
 import { walletLinkHeaders } from '../lib/wallet-link-headers.js';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -199,10 +199,18 @@ export class NodeWallet {
 
     // ─── Wallet CRUD ─────────────────────────────────────────────
     private createWallet(): void {
-        // Use secure wallet module — seed encrypted separately
-        this.wallet = initWallet();
-        console.log('    New wallet created: ' + this.wallet.address.slice(0, 12) + '...');
-        logActivity('Wallet created: ' + this.wallet.address.slice(0, 16) + '... (seed encrypted)', 'success');
+        const configured=(process.env.GSTD_WALLET_ADDRESS || '').trim();
+        if (!configured) {
+            this.wallet=null;
+            console.log('    No payout address linked; connect an external wallet before paid work.');
+            return;
+        }
+        const { Address } = require('@ton/core');
+        const address=Address.parse(configured).toRawString();
+        this.wallet={address,publicKey:'',created:new Date().toISOString()};
+        writeFileSync(this.walletFile,JSON.stringify(this.wallet,null,2),{mode:0o600});
+        console.log('    Watch-only payout address linked. No spending seed generated.');
+
     }
 
     private async refreshBalance(): Promise<void> {

@@ -56,6 +56,7 @@ export class CollectiveMemory {
     }
 
     async init(): Promise<void> {
+        if (!this.config.memory.enabled) return;
         // Try to connect to Redis (L2)
         if (this.config.memory.enabled) {
             await this.connectRedis();
@@ -109,6 +110,7 @@ export class CollectiveMemory {
         confidence: number,
         sources: string[] = []
     ): Promise<void> {
+        if (!this.config.memory.enabled) return;
         const key = this.hashKey(question);
         const now = new Date();
 
@@ -147,7 +149,7 @@ export class CollectiveMemory {
         }
 
         // L3: Report to platform for global sync (high confidence only)
-        if (this.l3Connected && confidence >= 0.8) {
+        if (process.env.GSTD_SHARE_KNOWLEDGE === 'true' && this.l3Connected && confidence >= 0.8) {
             this.syncToPlatform(entry).catch(() => { });
         }
 
@@ -156,6 +158,7 @@ export class CollectiveMemory {
 
     // ─── Recall ──────────────────────────────────────────────────
     async recall(question: string): Promise<MemoryEntry | null> {
+        if (!this.config.memory.enabled) return null;
         const key = this.hashKey(question);
         this.stats.totalRecalls++;
 

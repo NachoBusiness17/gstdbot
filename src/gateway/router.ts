@@ -152,6 +152,8 @@ class ResponseCache {
 }
 
 export interface InferenceOptions {
+    privacy?: 'local' | 'network';
+    cache?: boolean;
     maxTokens?: number;
     temperature?: number;
 }
@@ -177,7 +179,7 @@ export class NeuralRouter {
 
         // ─── L1: Cache ─────────────────────────────────────────────
         const cacheKey = this.cache.makeKey(requestedModel, messages, options);
-        const cached = this.cache.get(cacheKey);
+        const cached = options.cache === true ? this.cache.get(cacheKey) : null;
         if (cached) {
             return {
                 content: cached.content, model: cached.model, tier: 'cache',
@@ -189,26 +191,27 @@ export class NeuralRouter {
         const ollamaUrl   = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
         const platformUrl = (process.env.GSTD_SWARM_URL || 'https://app.gstdtoken.com').replace(/\/$/, '');
 
+        // ─── L3: Local Ollama (fallback when no network nodes) ─────
+        try {
+            const result = await this.callOllamaLocal(ollamaUrl, ollamaModel, messages, options.maxTokens ?? 512, options.temperature);
+            if (options.cache === true) this.cache.set(cacheKey, result.content, result.model);
+            demandTracker.record(ollamaModel);
+            return { ...result, latencyMs: Date.now() - start };
+        } catch (err: any) {
+            console.warn('[Router] Local Ollama unavailable:', err?.message?.substring(0, 80));
+        }
+
+        if (options.privacy === 'network') {
         // ─── L2: GSTD Task Queue (submit → node processes → poll result → earnings) ─
         try {
             const result = await this.routeViaTaskQueue(platformUrl, ollamaModel, messages, 90000, telegramId, options);
             if (result) {
-                this.cache.set(cacheKey, result.content, result.model);
+                if (options.cache === true) this.cache.set(cacheKey, result.content, result.model);
                 demandTracker.record(result.model);
                 return { ...result, latencyMs: Date.now() - start };
             }
         } catch (err: any) {
             console.warn('[Router] Task queue:', err?.message?.substring(0, 80));
-        }
-
-        // ─── L3: Local Ollama (fallback when no network nodes) ─────
-        try {
-            const result = await this.callOllamaLocal(ollamaUrl, ollamaModel, messages, options.maxTokens ?? 512, options.temperature);
-            this.cache.set(cacheKey, result.content, result.model);
-            demandTracker.record(ollamaModel);
-            return { ...result, latencyMs: Date.now() - start };
-        } catch (err: any) {
-            console.warn('[Router] Local Ollama unavailable:', err?.message?.substring(0, 80));
         }
 
         // ─── L4: P2P Peer Network ──────────────────────────────────
@@ -217,7 +220,7 @@ export class NeuralRouter {
             if (peer) {
                 try {
                     const r = await this.peerManager.forwardToPeer(peer, ollamaModel, messages, 2048, 0.7);
-                    this.cache.set(cacheKey, r.content, r.model);
+                    if (options.cache === true) this.cache.set(cacheKey, r.content, r.model);
                     demandTracker.record(ollamaModel);
                     return {
                         content: r.content, model: r.model, tier: 'gstd',
@@ -231,6 +234,7 @@ export class NeuralRouter {
             }
         }
 
+        } // Network forwarding requires explicit user consent.
         // ─── L5: Fallback ───────────────────────────────────────────
         return {
             content: '🐝 The GSTD Swarm is initialising. Please send your message again in a moment.',

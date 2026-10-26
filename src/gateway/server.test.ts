@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest, type Server } from 'node:http';
 import type { Express } from 'express';
@@ -9,6 +12,8 @@ const LINKED_WALLET = `EQ${'A'.repeat(46)}`;
 let gatewayServer: Server | undefined;
 let fetchMock: ReturnType<typeof vi.fn>;
 let previousBotToken: string | undefined;
+let previousConfigDir: string | undefined;
+let previousSetupToken: string | undefined;
 
 function postJson(
     port: number,
@@ -44,6 +49,10 @@ function postJson(
 
 describe('gateway free API key authorization', () => {
     beforeEach(async () => {
+        previousConfigDir=process.env.GSTD_CONFIG_DIR;
+        previousSetupToken=process.env.GSTD_DASHBOARD_SETUP_TOKEN;
+        process.env.GSTD_CONFIG_DIR=mkdtempSync(join(tmpdir(),'gstd-gateway-auth-'));
+        process.env.GSTD_DASHBOARD_SETUP_TOKEN='test-setup-token-that-is-longer-than-thirty-two';
         previousBotToken = process.env.TELEGRAM_BOT_TOKEN;
         process.env.TELEGRAM_BOT_TOKEN = BOT_TOKEN;
         fetchMock = vi.fn();
@@ -70,6 +79,8 @@ describe('gateway free API key authorization', () => {
             });
         }
         gatewayServer = undefined;
+        if(previousConfigDir===undefined)delete process.env.GSTD_CONFIG_DIR;else process.env.GSTD_CONFIG_DIR=previousConfigDir;
+        if(previousSetupToken===undefined)delete process.env.GSTD_DASHBOARD_SETUP_TOKEN;else process.env.GSTD_DASHBOARD_SETUP_TOKEN=previousSetupToken;
         vi.unstubAllGlobals();
         if (previousBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
         else process.env.TELEGRAM_BOT_TOKEN = previousBotToken;
@@ -87,6 +98,33 @@ describe('gateway free API key authorization', () => {
         return postJson(address.port, body, {}, '/api/v1/tasks/push');
     }
 
+    it.each(['/api/node/status','/api/node/usage/recent','/api/node/events','/api/update'])('does not treat a loopback/tunnel request as operator authorization: %s',async path=>{
+        const address=gatewayServer!.address();
+        if(!address || typeof address==='string')throw Error('No server');
+        const response=await postJson(address.port,{}, {},path);
+        expect(response.status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+    it.each(['/api/bridge/send','/api/telegram/webhook','/api/system/reset','/api/wallet/export'])('retires unsafe host/financial services before running their handler: %s',async path=>{
+        const address=gatewayServer!.address();
+        if(!address || typeof address==='string')throw Error('No server');
+        const response=await postJson(address.port,{}, {},path);
+        expect(response.status).toBe(410);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+    it('sets a salted operator PIN and permits login/control only with a valid session',async()=>{
+        const address=gatewayServer!.address();
+        if(!address || typeof address==='string')throw Error('No server');
+        const setup=await postJson(address.port,{setupToken:process.env.GSTD_DASHBOARD_SETUP_TOKEN,pin:'12345678'}, {},'/api/auth/setup');
+        expect(setup.status).toBe(200);
+        const login=await postJson(address.port,{pin:'12345678'}, {},'/api/auth/login');
+        expect(login.status).toBe(200);
+        expect(login.body.token).toEqual(expect.any(String));
+        const change=await postJson(address.port,{current_pin:'12345678',new_pin:'87654321'},
+            {Authorization:'Bearer '+login.body.token},'/api/auth/change-pin');
+        expect(change.status).toBe(200);
+        expect((await postJson(address.port,{pin:'87654321'}, {},'/api/auth/login')).status).toBe(200);
+    });
     it('rejects unauthenticated key issuance before resolving a wallet', async () => {
         const response = await issueKey({ telegram_id: '123456', wallet_address: LINKED_WALLET });
 
