@@ -1,3 +1,4 @@
+import {setupTokenFor} from '../security/setup-token.js';
 import {isCloudModel} from '../lib/local-model-options.js';
 import {modelCatalog,refreshModelCatalog,catalogHardware,compatibility} from '../lib/model-catalog.js';
 import {withComputeSlot,ComputeCapacityError,computeLoad} from '../security/compute.js';
@@ -1296,7 +1297,7 @@ export class OmegaGateway {
         const configDir = process.env.GSTD_CONFIG_DIR || join(require('os').homedir(), '.config', 'gstdbot');
         const pinFile = join(configDir, 'dashboard_pin.hash'); // .hash not .txt
         const oldPinFile = join(configDir, 'dashboard_pin.txt');
-        const setupToken = process.env.GSTD_DASHBOARD_SETUP_TOKEN || '';
+        let setupToken = '';
         let pinHash: string = '';
         let pinConfigured = false;
 
@@ -1321,6 +1322,9 @@ export class OmegaGateway {
         if (!existsSync(configDir)) {
             try { mkdirSync(configDir, { recursive: true }); } catch (_e) {}
         }
+
+        try{setupToken=setupTokenFor(configDir,pinConfigured,process.env.GSTD_DASHBOARD_SETUP_TOKEN);}
+        catch{logActivity('Dashboard initial setup disabled: restore the local setup token or configure GSTD_DASHBOARD_SETUP_TOKEN.', 'warn');}
 
         // POST /api/auth/setup — create PIN on first login
         this.app.post('/api/auth/setup', (req, res) => {

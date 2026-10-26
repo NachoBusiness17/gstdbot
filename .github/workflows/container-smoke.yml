@@ -2,9 +2,9 @@ name: Offline container smoke
 on:
   push:
     branches: [main]
-    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', '.github/workflows/container-smoke.yml']
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', 'web/**', 'data/**', 'scripts/**', '.github/workflows/container-smoke.yml']
   pull_request:
-    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', '.github/workflows/container-smoke.yml']
+    paths: ['Dockerfile', 'docker-compose.yml', 'package*.json', 'src/**', 'web/**', 'data/**', 'scripts/**', '.github/workflows/container-smoke.yml']
   workflow_dispatch:
 concurrency:
   group: container-smoke-${{ github.ref }}
@@ -41,6 +41,29 @@ jobs:
           test "$(docker exec gstd-smoke curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/system/ssh)" = 410
           docker exec gstd-smoke node dist/cli/index.js --help
           docker exec gstd-smoke node dist/cli/index.js doctor
+      - name: Verify first-run operator access and offline model catalog
+        run: |
+          docker exec -i gstd-smoke node <<'NODE'
+          const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+          (async()=>{
+            const file=path.join(process.env.GSTD_CONFIG_DIR,'setup-token');
+            assert.equal(fs.statSync(file).mode&0o777,0o600);
+            const setupToken=fs.readFileSync(file,'utf8').trim();
+            const base='http://127.0.0.1:8080';
+            const first=await fetch(base+'/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:'93517428',setupToken})});
+            assert.equal(first.status,200);
+            const {token}=await first.json();
+            const headers={Authorization:'Bearer '+token};
+            const catalog=await fetch(base+'/api/ollama/catalog',{headers});
+            assert.equal(catalog.status,200);
+            const body=await catalog.json();
+            assert(body.models.some(m=>m.id==='qwen3.5:0.8b'));
+            assert(body.hardware.cpu_cores>0);
+            await fetch(base+'/api/auth/logout',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:'{}'});
+            assert.equal((await fetch(base+'/api/ollama/catalog',{headers})).status,401);
+            console.log('First-run access, packaged offline catalog and logout verified; no credentials printed.');
+          })().catch(e=>{console.error(e.message);process.exit(1);});
+          NODE
       - name: Diagnose failed test container
         if: failure()
         run: docker logs --tail 80 gstd-smoke
