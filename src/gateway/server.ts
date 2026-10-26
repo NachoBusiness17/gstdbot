@@ -336,6 +336,8 @@ export class OmegaGateway {
 
     constructor(config: Partial<GatewayConfig> = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+        // cloudflared connects over loopback; direct remote clients are not trusted proxies.
+        this.app.set('trust proxy', 'loopback');
         this.router = new NeuralRouter(this.config.swarmUrl, this.config.cocoonEnabled, () => { void this.platformLink.wakeTaskLoop(); });
         this.sessions = new SessionManager();
         this.appManager = new AppManager();
