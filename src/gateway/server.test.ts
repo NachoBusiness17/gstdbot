@@ -20,13 +20,14 @@ function postJson(
     body: Record<string, unknown>,
     headers: Record<string, string> = {},
     path = '/api/v1/free-api/key',
+    method = 'POST',
 ) {
     return new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
         const request = httpRequest({
             hostname: '127.0.0.1',
             port,
             path,
-            method: 'POST',
+            method,
             headers: { 'Content-Type': 'application/json', ...headers },
         }, (response) => {
             const chunks: Buffer[] = [];
@@ -43,7 +44,7 @@ function postJson(
             });
         });
         request.on('error', reject);
-        request.end(JSON.stringify(body));
+        request.end(method === 'GET' ? undefined : JSON.stringify(body));
     });
 }
 
@@ -240,6 +241,40 @@ describe('gateway free API key authorization', () => {
         expect(result.status).toBe(400);
         expect(result.body.error).toBe('invalid_ton_address');
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('shows local operator measurements and distinguishes empty Ollama from an unavailable service', async () => {
+        const address = gatewayServer!.address() as {port:number};
+        const login = await postJson(address.port, {pin:'83572914',setupToken:process.env.GSTD_DASHBOARD_SETUP_TOKEN}, {}, '/api/auth/setup');
+        const headers = {Authorization:'Bearer '+login.body.token};
+        const overview = await postJson(address.port, {}, headers, '/api/node/operator', 'GET');
+        expect(overview.status).toBe(200);
+        expect(overview.body).toMatchObject({compute:{active:0,capacity:1},requests:0,payout_address:null,platform:{registered:false}});
+        expect(fetchMock).not.toHaveBeenCalled();
+        fetchMock.mockResolvedValue(new Response(JSON.stringify({models:[]})));
+        const empty = await postJson(address.port, {}, headers, '/api/ollama/models', 'GET');
+        expect(empty.body).toMatchObject({ollama_available:true,installed:[],running:[]});
+        fetchMock.mockRejectedValue(new Error('Ollama offline'));
+        const down = await postJson(address.port, {}, headers, '/api/ollama/models', 'GET');
+        expect(down.body).toMatchObject({ollama_available:false,installed:[]});
+    });
+    it('keeps model download progress intact when an upstream JSON record spans chunks', async () => {
+        const address = gatewayServer!.address() as {port:number};
+        const login = await postJson(address.port, {pin:'83572914',setupToken:process.env.GSTD_DASHBOARD_SETUP_TOKEN}, {}, '/api/auth/setup');
+        const encoder = new TextEncoder();
+        fetchMock.mockImplementation(async (url:string) => {
+            if(String(url).endsWith('/api/pull'))return new Response(new ReadableStream({
+                start(controller){for(const part of ['{"status":"pulling","tot','al":100,"completed":50}\n{"status":"suc','cess"}\n'])controller.enqueue(encoder.encode(part));controller.close();}
+            }));
+            return new Response(JSON.stringify({models:[]}));
+        });
+        const text = await new Promise<string>((resolve,reject)=>{
+            const req=httpRequest({hostname:'127.0.0.1',port:address.port,path:'/api/ollama/models/pull',method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+login.body.token}},res=>{
+                let body='';res.on('data',chunk=>body+=chunk.toString());res.on('end',()=>resolve(body));
+            });req.on('error',reject);req.end(JSON.stringify({model:'qwen2.5:0.5b'}));
+        });
+        expect(text).toContain('"completed":50');
+        expect(text).toContain('"status":"success"');
     });
 
 });
