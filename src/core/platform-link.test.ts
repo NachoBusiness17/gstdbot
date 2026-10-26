@@ -160,7 +160,7 @@ describe('PlatformLink task delivery', () => {
                 },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
-                choices: [{ message: { content: 'hello back' } }],
+                message: { content: 'hello back' },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
@@ -179,7 +179,7 @@ describe('PlatformLink task delivery', () => {
 
         const [, inferenceOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
         expect(JSON.parse(String(inferenceOptions.body))).toMatchObject({
-            model: 'llama3.2:1b', max_tokens: 12, temperature: 0,
+            model: 'llama3.2:1b', keep_alive: -1, options: {num_ctx: 2048, num_predict: 12, temperature: 0},
             messages: [{ role: 'user', content: 'hello' }],
         });
         const [completionUrl, completionOptions] = fetchMock.mock.calls[2] as [string, RequestInit];
@@ -204,7 +204,7 @@ describe('PlatformLink task delivery', () => {
                 task: { task_id: 'task-2', payload: { prompt: 'hello' } },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
-                choices: [{ message: { content: '' } }],
+                message: { content: '' },
             }), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
 
@@ -251,6 +251,25 @@ describe('PlatformLink request budget', () => {
         expect(request).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(1000);
         expect(request).toHaveBeenCalledTimes(2);
+        await pl.stop();
+    });
+});
+
+describe('PlatformLink local compute failure', () => {
+    it('keeps quota backoff separate from a failed model so a new chat can wake the worker', async () => {
+        vi.useFakeTimers();
+        const pl = makePL();
+        (pl as any).registered = true;
+        const request = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({task:{task_id:'failed-task',payload:{prompt:'hello'}}})))
+            .mockResolvedValueOnce(new Response('model failed',{status:500}))
+            .mockResolvedValueOnce(new Response(JSON.stringify({task:null})));
+        vi.stubGlobal('fetch',request);
+        pl.startTaskLoop();
+        await pl.wakeTaskLoop();
+        expect((pl as any).taskBackoffUntil).toBe(0);
+        await pl.wakeTaskLoop();
+        expect(request).toHaveBeenCalledTimes(3);
         await pl.stop();
     });
 });

@@ -3,7 +3,7 @@
 > Source-available node software for the GSTD AI + TON network.  
 > Status: **early-stage / pre-production**. Rewards are not guaranteed and depend on real network activity; there are currently no real payouts from the sovereign core (simulated only).
 
-[![Version](https://img.shields.io/badge/version-3.5.7-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
+[![Version](https://img.shields.io/badge/version-3.5.8-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
 [![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![Website](https://img.shields.io/badge/website-gstdtoken.com-00d2ff)](https://gstdtoken.com)
@@ -334,3 +334,5 @@ Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), with
 ## Free-tier operation
 
 Inference uses one adaptive poller: 30-second idle checks, immediate wakeup for gateway chat, and quota-aware backoff. Peer discovery and public dashboards avoid continuous short-interval polling. See [request budget](https://github.com/gstdcoin/ai/blob/main/docs/FREE_TIER_REQUEST_BUDGET.md) for schedules and latency boundaries.
+
+The local Ollama executor uses the native chat API so context, generation limits and keep-alive are explicit. GSTD_OLLAMA_CONTEXT defaults to 2048; GSTD_DEFAULT_MODEL selects the operator’s model for auto requests. Explicit model IDs remain available. A slow local model does not trigger platform quota backoff. Gateway chat waits for its local worker before reading the public result, reducing repeated result polls.

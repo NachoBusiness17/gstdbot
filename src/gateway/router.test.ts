@@ -26,7 +26,7 @@ describe('NeuralRouter canonical task queue', () => {
   it('does not reuse an answer across different conversation context or models', async () => {
     const request = vi.fn().mockImplementation(async (url: string) =>
       url.endsWith('/network/stats') ? response({active_workers:0}) : response({
-        model:'llama3.2:3b',choices:[{message:{content:'computed answer'}}],usage:{},
+        model:'llama3.2:3b',message:{content:'computed answer'},
       }));
     vi.stubGlobal('fetch',request);
     const router = new NeuralRouter('',false);
@@ -40,10 +40,10 @@ describe('NeuralRouter canonical task queue', () => {
   });
   it('preserves the requested generation limits on local fallback', async () => {
     const request = vi.fn().mockResolvedValueOnce(response({active_workers:0})).mockResolvedValueOnce(response({
-      choices:[{message:{content:'short answer'}}],usage:{},
+      message:{content:'short answer'},
     }));
     vi.stubGlobal('fetch',request);
     await new NeuralRouter('',false).route('llama3.2:3b',[{role:'user',content:'hello'}],undefined,{maxTokens:9,temperature:0});
-    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({max_tokens:9,temperature:0});
+    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({options:{num_ctx:2048,num_predict:9,temperature:0},keep_alive:-1});
   });
 });

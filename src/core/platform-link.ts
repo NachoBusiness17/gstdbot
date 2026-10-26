@@ -348,6 +348,7 @@ export class PlatformLink extends EventEmitter {
     private async pollAndProcess() {
         if (this.tasksBusy || !this.registered) return;
         this.tasksBusy = true;
+        let phase = 'poll';
         try {
             // The legacy Worker exposes GET polling; the current app uses POST.
             // Select explicitly rather than downgrading on auth/server errors.
@@ -406,26 +407,30 @@ export class PlatformLink extends EventEmitter {
 
             const maxTokens = payload.max_tokens ?? task.max_tokens;
             const temperature = payload.temperature ?? task.temperature;
+            phase = 'inference';
             const inferenceStarted = Date.now();
-            const aiResp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
+            const aiResp = await fetch(`${ollamaUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model, messages, stream: false,
+                    model, messages, stream: false, keep_alive: -1,
+                    options: { num_ctx: Math.max(512, Math.min(8192, Number(process.env.GSTD_OLLAMA_CONTEXT) || 2048)),
                     ...(typeof maxTokens === 'number' && Number.isInteger(maxTokens) && maxTokens > 0
-                        ? { max_tokens: maxTokens } : {}),
+                        ? { num_predict: Math.min(maxTokens, 8192) } : { num_predict: 256 }),
                     ...(typeof temperature === 'number' && Number.isFinite(temperature)
                         && temperature >= 0 && temperature <= 2 ? { temperature } : {}),
+                    },
                 }),
                 signal: AbortSignal.timeout(90000),
             });
             if (!aiResp.ok) throw new Error(`Local inference failed: HTTP ${aiResp.status}`);
             const aiData: any = await aiResp.json();
-            const content = aiData?.choices?.[0]?.message?.content;
+            const content = aiData?.message?.content;
             if (typeof content !== 'string' || !content.trim()) {
                 throw new Error('Local inference returned an empty response');
             }
 
+            phase = 'completion';
             const completion = await fetch(`${this.platformUrl}/api/v1/tasks/complete`, {
                 method: 'POST',
                 headers: {
@@ -445,12 +450,18 @@ export class PlatformLink extends EventEmitter {
                 this.lastTaskErrorLog = Date.now();
                 console.warn(`[PlatformLink] Task poll or execution failed: ${err.message}`);
             }
+            if (phase === 'inference') {
+                // Slow local compute is not a platform outage or a quota signal.
+                this.nextTaskPollMs = this.idlePollMs;
+                this.taskBackoffUntil = 0;
+            } else {
             this.taskPollFailures++;
             this.nextTaskPollMs = Math.max(
                 Math.min(60_000 * 2 ** Math.min(this.taskPollFailures - 1, 3), 300_000),
                 this.taskBackoffUntil - Date.now(),
             );
             this.taskBackoffUntil = Date.now() + this.nextTaskPollMs;
+            }
             this.emit('task:error', { error: err.message, nodeId: this.nodeId });
         } finally {
             this.tasksBusy = false;

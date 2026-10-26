@@ -57,7 +57,7 @@ const GSTD_MODELS = [
     'qwen2.5:32b',
 ];
 
-const DEFAULT_MODEL = 'llama3.2:3b';
+const DEFAULT_MODEL = process.env.GSTD_DEFAULT_MODEL || 'llama3.2:3b';
 
 // Map legacy Groq/OpenAI-style model IDs → Ollama model IDs.
 // Called when routing requests that use old model name conventions.
@@ -160,7 +160,7 @@ export class NeuralRouter {
     private cache = new ResponseCache();
     private peerManager: import('../p2p/peers.js').PeerManager | null = null;
 
-    constructor(_swarmUrl: string, _cocoonEnabled: boolean, private taskWakeup?: () => void) {}
+    constructor(_swarmUrl: string, _cocoonEnabled: boolean, private taskWakeup?: () => void | Promise<void>) {}
 
     setPeerManager(pm: import('../p2p/peers.js').PeerManager): void {
         this.peerManager = pm;
@@ -274,12 +274,14 @@ export class NeuralRouter {
         if (!submitResp.ok) return null;
         const { task_id } = await submitResp.json() as any;
         if (!task_id) return null;
-        this.taskWakeup?.();
-
-        // Poll until complete or timeout
+        // A local executor can finish before the first result read, avoiding
+        // repeated platform reads while this same machine computes.
         const deadline = Date.now() + timeoutMs;
+        await this.taskWakeup?.();
+        let firstRead = true;
         while (Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, 2000));
+            if (!firstRead || !this.taskWakeup) await new Promise(r => setTimeout(r, 2000));
+            firstRead = false;
             try {
                 const pollResp = await fetch(`${platformUrl}/api/v1/tasks/result?task_id=${encodeURIComponent(task_id)}`, {
                     signal: AbortSignal.timeout(5000),
@@ -307,15 +309,15 @@ export class NeuralRouter {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90_000);
         try {
-            const resp = await fetch(`${ollamaUrl}/v1/chat/completions`, {
+            const resp = await fetch(`${ollamaUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages, stream: false, max_tokens: maxTokens, keep_alive: -1, ...(temperature === undefined ? {} : { temperature }) }),
+                body: JSON.stringify({ model, messages, stream: false, keep_alive: -1, options: { num_ctx: Math.max(512, Math.min(8192, Number(process.env.GSTD_OLLAMA_CONTEXT) || 2048)), num_predict: maxTokens, ...(temperature === undefined ? {} : { temperature }) } }),
                 signal: controller.signal,
             });
             if (!resp.ok) throw new Error(`Ollama ${resp.status}: ${await resp.text()}`);
             const data: any = await resp.json();
-            const content = stripThinkTags(data.choices?.[0]?.message?.content || '');
+            const content = stripThinkTags(data.message?.content || '');
             if (!content) throw new Error('Empty Ollama response');
             return {
                 content,
@@ -323,9 +325,9 @@ export class NeuralRouter {
                 tier: 'gstd',
                 latencyMs: 0,
                 usage: {
-                    promptTokens:     data.usage?.prompt_tokens     || 0,
-                    completionTokens: data.usage?.completion_tokens || 0,
-                    totalTokens:      data.usage?.total_tokens      || 0,
+                    promptTokens:     data.prompt_eval_count || 0,
+                    completionTokens: data.eval_count || 0,
+                    totalTokens:      (data.prompt_eval_count || 0) + (data.eval_count || 0),
                 },
             };
         } finally {

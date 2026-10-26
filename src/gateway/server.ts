@@ -338,7 +338,7 @@ export class OmegaGateway {
         this.config = { ...DEFAULT_CONFIG, ...config };
         // cloudflared connects over loopback; direct remote clients are not trusted proxies.
         this.app.set('trust proxy', 'loopback');
-        this.router = new NeuralRouter(this.config.swarmUrl, this.config.cocoonEnabled, () => { void this.platformLink.wakeTaskLoop(); });
+        this.router = new NeuralRouter(this.config.swarmUrl, this.config.cocoonEnabled, () => this.platformLink.wakeTaskLoop());
         this.sessions = new SessionManager();
         this.appManager = new AppManager();
         this.server = http.createServer(this.app);
@@ -4629,13 +4629,14 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
     private async _preWarmOllama(): Promise<void> {
         if (!this._availableModels.length) return;
         const ollamaUrl = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-        const model = this._availableModels[0];
+        const preferred = process.env.GSTD_DEFAULT_MODEL || '';
+        const model = this._availableModels.includes(preferred) ? preferred : this._availableModels[0];
         try {
             logActivity(`Pre-warming Ollama model: ${model}`, 'info');
-            await fetch(`${ollamaUrl}/v1/chat/completions`, {
+            await fetch(`${ollamaUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1, keep_alive: -1 }),
+                body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], stream: false, options: {num_predict:1,num_ctx:2048}, keep_alive: -1 }),
                 signal: AbortSignal.timeout(90_000),
             });
             logActivity(`Ollama model ${model} pre-warmed and pinned`, 'success');
