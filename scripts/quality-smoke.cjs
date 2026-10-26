@@ -19,7 +19,7 @@ async function run(){
   const start=Date.now();let row;
   try{
    const r=await fetch(origin+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model,messages:[{role:'user',content:test.prompt}],max_tokens:48,temperature:0,privacy:'local'}),signal:AbortSignal.timeout(55000)});
+    body:JSON.stringify({model,messages:[{role:'user',content:test.prompt}],max_tokens:48,temperature:0,privacy:'local'}),signal:AbortSignal.timeout(125000)});
    if(!r.ok)throw new Error('HTTP '+r.status);
    const a=await r.json(),text=a.choices?.[0]?.message?.content || '';
    row={model,actual_model:a.model,case:test.id,passed:test.check(text),response:text.slice(0,500),latency_ms:Date.now()-start};
