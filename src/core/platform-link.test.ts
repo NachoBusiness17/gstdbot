@@ -11,6 +11,7 @@ function makePL(): PlatformLink {
 }
 
 afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
 });
@@ -211,5 +212,45 @@ describe('PlatformLink task delivery', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(taskError).toHaveBeenCalledOnce();
+    });
+});
+
+describe('PlatformLink request budget', () => {
+    it('polls idle work once per 30 seconds and wakes immediately for a real chat', async () => {
+        vi.useFakeTimers();
+        const pl = makePL();
+        (pl as any).registered = true;
+        const request = vi.fn(async () => new Response(JSON.stringify({task:null})));
+        vi.stubGlobal('fetch', request);
+        pl.startTaskLoop();
+        await vi.advanceTimersByTimeAsync(29_000);
+        expect(request).not.toHaveBeenCalled();
+        await pl.wakeTaskLoop();
+        expect(request).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(29_000);
+        expect(request).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(request).toHaveBeenCalledTimes(2);
+        await pl.stop();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('honors Retry-After and does not let chat wakeups bypass a quota backoff', async () => {
+        vi.useFakeTimers();
+        const pl = makePL();
+        (pl as any).registered = true;
+        const request = vi.fn()
+            .mockResolvedValueOnce(new Response('', {status:429, headers:{'retry-after':'120'}}))
+            .mockImplementation(async () => new Response(JSON.stringify({task:null})));
+        vi.stubGlobal('fetch', request);
+        pl.startTaskLoop();
+        await pl.wakeTaskLoop();
+        await pl.wakeTaskLoop();
+        await vi.advanceTimersByTimeAsync(119_000);
+        expect(request).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(request).toHaveBeenCalledTimes(2);
+        await pl.stop();
     });
 });

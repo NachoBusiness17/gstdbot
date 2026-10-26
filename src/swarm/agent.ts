@@ -145,6 +145,9 @@ export class SwarmAgent {
     }
 
     // ─── P2P Integration ─────────────────────────────────────────
+    private externalInferencePolling = false;
+    setExternalInferencePolling(enabled: boolean): void { this.externalInferencePolling = enabled; }
+
     setIdentity(identity: AttestorIdentity): void { this.identity = identity; }
     setPeerManager(pm: PeerManager | null): void { this.peerManager = pm; }
 
@@ -215,14 +218,16 @@ export class SwarmAgent {
         // Keep the fallback heartbeat inside the platform's 10-minute node TTL.
         this.heartbeatTimer = setInterval(() => this.heartbeat(), 8 * 60_000);
 
-        // Start task polling (every 30 seconds for general queue)
-        this.taskPollTimer = setInterval(() => this.pollTasks(), 30_000);
+        // Non-inference work uses a slower poll; inference has one owner.
+        this.taskPollTimer = setInterval(() => this.pollTasks(), 60_000);
 
-        // Priority inference queue poll (every 5 seconds — fast path for AI routing)
-        this.priorityPollTimer = setInterval(() => this.pollPriorityInference(), 5_000);
+        // Standalone agents retain priority delivery; integrated nodes avoid duplicate polls.
+        if (!this.externalInferencePolling) {
+            this.priorityPollTimer = setInterval(() => this.pollPriorityInference(), 30_000);
+        }
 
-        // Fetch peers every 60 seconds
-        this.backgroundTimers.push(setInterval(() => this.fetchPeers(), 60_000));
+        // Refresh peer discovery every five minutes; direct peer transport stays active.
+        this.backgroundTimers.push(setInterval(() => this.fetchPeers(), 5 * 60_000));
 
         // Refresh tier info every 5 minutes
         this.backgroundTimers.push(setInterval(() => this.fetchRewardsInfo(), 5 * 60_000));
@@ -631,7 +636,8 @@ export class SwarmAgent {
             const result = await this.apiCall('/tasks/poll', {
                 node_id:      this.config.nodeId,
                 capabilities: this.config.models.available,
-                supported_task_kinds: SUPPORTED_TASK_KINDS,
+                supported_task_kinds: this.externalInferencePolling
+                    ? SUPPORTED_TASK_KINDS.filter(kind => kind !== 'inference') : SUPPORTED_TASK_KINDS,
                 resources:    this.getResourceStats(),
                 max_tasks:    1,
             });
@@ -652,7 +658,8 @@ export class SwarmAgent {
             const result = await this.apiCall('/tasks/poll', {
                 node_id:       this.config.nodeId,
                 capabilities:  this.config.models.available,
-                supported_task_kinds: SUPPORTED_TASK_KINDS,
+                supported_task_kinds: this.externalInferencePolling
+                    ? SUPPORTED_TASK_KINDS.filter(kind => kind !== 'inference') : SUPPORTED_TASK_KINDS,
                 resources:     this.getResourceStats(),
                 priority_only: true,
             });
@@ -1410,7 +1417,8 @@ export class SwarmAgent {
             });
             // Any HTTP response means the platform is reachable —
             // only network failures (catch) should trip the circuit breaker.
-            platformHealth.recordSuccess();
+            if (resp.status === 429 || resp.status >= 500) platformHealth.recordFailure();
+            else platformHealth.recordSuccess();
             if (resp.ok) {
                 return await resp.json().catch(() => ({ ok: true }));
             }

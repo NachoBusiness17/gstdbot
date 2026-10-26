@@ -336,7 +336,7 @@ export class OmegaGateway {
 
     constructor(config: Partial<GatewayConfig> = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
-        this.router = new NeuralRouter(this.config.swarmUrl, this.config.cocoonEnabled);
+        this.router = new NeuralRouter(this.config.swarmUrl, this.config.cocoonEnabled, () => { void this.platformLink.wakeTaskLoop(); });
         this.sessions = new SessionManager();
         this.appManager = new AppManager();
         this.server = http.createServer(this.app);
@@ -4727,8 +4727,8 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
                             dln: !!this.subsystems?.blockchain,
                             maxConcurrentTasks: 5,
                         }));
-                        this.platformLink.start(2 * 60_000).catch(() => {});
-                        this.platformLink.startTaskLoop(5000); // poll for tasks every 5s → nodes earn GSTD
+                        this.platformLink.start(4 * 60_000).catch(() => {});
+                        this.platformLink.startTaskLoop(30_000); // idle polling; chats wake the existing worker
 
                         // Register scheduled tasks
                         this.scheduler.register('platform-heartbeat', {

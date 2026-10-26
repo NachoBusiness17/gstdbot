@@ -3,7 +3,7 @@
 > Source-available node software for the GSTD AI + TON network.  
 > Status: **early-stage / pre-production**. Rewards are not guaranteed and depend on real network activity; there are currently no real payouts from the sovereign core (simulated only).
 
-[![Version](https://img.shields.io/badge/version-3.5.5-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
+[![Version](https://img.shields.io/badge/version-3.5.6-8b5cf6)](https://github.com/gstdcoin/gstdbot/releases)
 [![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-06b6d4)](https://nodejs.org)
 [![Website](https://img.shields.io/badge/website-gstdtoken.com-00d2ff)](https://gstdtoken.com)
@@ -330,3 +330,7 @@ This is a community-driven, source-available project. Any contribution helps —
 ## License
 
 Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), with an additional permission for taking part in the GSTD network (including receiving GSTD rewards). Commercial use by companies needs a separate license. Bundled third-party skills and models keep their own licenses.
+
+## Free-tier operation
+
+Inference uses one adaptive poller: 30-second idle checks, immediate wakeup for gateway chat, and quota-aware backoff. Peer discovery and public dashboards avoid continuous short-interval polling. See [request budget](https://github.com/gstdcoin/ai/blob/main/docs/FREE_TIER_REQUEST_BUDGET.md) for schedules and latency boundaries.

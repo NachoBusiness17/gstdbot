@@ -321,6 +321,7 @@ async function main(): Promise<void> {
     if (!isPlatform) {
         console.log(`  [6/${TOTAL_STEPS}] Joining swarm network...`);
         swarm = new SwarmAgent(config, wallet, memory);
+        swarm.setExternalInferencePolling(true);
         if (swarm) swarm.setIdentity(identity);
         if (swarm) swarm.setPeerManager(gateway.getPeerManager());
         await swarm.start();

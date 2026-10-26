@@ -298,12 +298,40 @@ export class PlatformLink extends EventEmitter {
 
     private taskTimer: NodeJS.Timeout | null = null;
     private tasksBusy = false;
+    private taskLoopEnabled = false;
+    private idlePollMs = 30_000;
+    private nextTaskPollMs = 30_000;
+    private taskPollFailures = 0;
+    private taskBackoffUntil = 0;
+
+    private scheduleTaskPoll() {
+        if (!this.taskLoopEnabled) return;
+        if (this.taskTimer) clearTimeout(this.taskTimer);
+        this.taskTimer = setTimeout(async () => {
+            this.taskTimer = null;
+            await this.runTaskPoll();
+            this.scheduleTaskPoll();
+        }, this.nextTaskPollMs);
+    }
+
+    /** A real chat request wakes the existing worker without permanent fast polling. */
+    async wakeTaskLoop(): Promise<void> {
+        if (!this.taskLoopEnabled || Date.now() < this.taskBackoffUntil) return;
+        if (this.taskTimer) clearTimeout(this.taskTimer);
+        this.taskTimer = null;
+        await this.runTaskPoll();
+        this.scheduleTaskPoll();
+    }
+
 
     // Polling is the supported task-delivery path; retry frequently enough to keep
     // queue latency low while staying within the platform's per-node rate limit.
-    startTaskLoop(intervalMs = 30000) {
-        this.taskTimer = setInterval(() => { void this.runTaskPoll(); }, intervalMs);
-        console.log(`  ⚡ Task loop: fallback poll every ${intervalMs / 1000}s (M4: push-primary)`);
+    startTaskLoop(intervalMs = 30_000) {
+        this.taskLoopEnabled = true;
+        this.idlePollMs = Math.max(5_000, intervalMs);
+        this.nextTaskPollMs = this.idlePollMs;
+        this.scheduleTaskPoll();
+        console.log(`  Task loop: idle ${this.idlePollMs / 1000}s; chat wakes worker immediately`);
     }
 
     private async runTaskPoll(): Promise<void> {
@@ -345,10 +373,17 @@ export class PlatformLink extends EventEmitter {
                 }
             );
             if (!resp.ok) {
+                const retryAfter = Number(resp.headers.get('retry-after'));
+                if ((resp.status === 429 || resp.status >= 500) && Number.isFinite(retryAfter) && retryAfter > 0) {
+                    this.taskBackoffUntil = Date.now() + Math.min(retryAfter * 1000, 15 * 60_000);
+                }
                 throw new Error(`Task poll failed: HTTP ${resp.status}`);
             }
             const data: any = await resp.json();
+            this.taskPollFailures = 0;
+            this.nextTaskPollMs = this.idlePollMs;
             if (!data.task?.task_id) return;
+            this.nextTaskPollMs = 5_000;
 
             const task = data.task;
             const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
@@ -410,6 +445,12 @@ export class PlatformLink extends EventEmitter {
                 this.lastTaskErrorLog = Date.now();
                 console.warn(`[PlatformLink] Task poll or execution failed: ${err.message}`);
             }
+            this.taskPollFailures++;
+            this.nextTaskPollMs = Math.max(
+                Math.min(60_000 * 2 ** Math.min(this.taskPollFailures - 1, 3), 300_000),
+                this.taskBackoffUntil - Date.now(),
+            );
+            this.taskBackoffUntil = Date.now() + this.nextTaskPollMs;
             this.emit('task:error', { error: err.message, nodeId: this.nodeId });
         } finally {
             this.tasksBusy = false;
@@ -427,8 +468,9 @@ export class PlatformLink extends EventEmitter {
     }
 
     async stop(): Promise<void> {
+        this.taskLoopEnabled = false;
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-        if (this.taskTimer) clearInterval(this.taskTimer);
+        if (this.taskTimer) clearTimeout(this.taskTimer);
         if (this.registrationRetryTimer) clearTimeout(this.registrationRetryTimer);
         this.heartbeatTimer = null;
         this.taskTimer = null;

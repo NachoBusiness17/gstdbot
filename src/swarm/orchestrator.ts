@@ -88,7 +88,7 @@ export class SwarmOrchestrator {
         logActivity('Swarm Orchestrator initializing...', 'info');
 
         // Start peer discovery
-        this.peerDiscoveryInterval = setInterval(() => this.discoverPeers(), 30000);
+        this.peerDiscoveryInterval = setInterval(() => this.discoverPeers(), 5 * 60_000);
 
         // Start heartbeat to known peers
         this.heartbeatInterval = setInterval(() => this.broadcastHeartbeat(), 15000);
@@ -151,7 +151,7 @@ export class SwarmOrchestrator {
         // Clean stale peers
         const now = Date.now();
         for (const [id, peer] of this.peers) {
-            if (now - peer.lastSeen > 120000) this.peers.delete(id);
+            if (now - peer.lastSeen > 10 * 60_000) this.peers.delete(id);
         }
     }
 

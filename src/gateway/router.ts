@@ -160,7 +160,7 @@ export class NeuralRouter {
     private cache = new ResponseCache();
     private peerManager: import('../p2p/peers.js').PeerManager | null = null;
 
-    constructor(_swarmUrl: string, _cocoonEnabled: boolean) {}
+    constructor(_swarmUrl: string, _cocoonEnabled: boolean, private taskWakeup?: () => void) {}
 
     setPeerManager(pm: import('../p2p/peers.js').PeerManager): void {
         this.peerManager = pm;
@@ -274,6 +274,7 @@ export class NeuralRouter {
         if (!submitResp.ok) return null;
         const { task_id } = await submitResp.json() as any;
         if (!task_id) return null;
+        this.taskWakeup?.();
 
         // Poll until complete or timeout
         const deadline = Date.now() + timeoutMs;
