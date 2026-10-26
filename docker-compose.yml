@@ -9,23 +9,25 @@
 
 services:
   gstd-node:
-    image: gstdcoin/node:latest
+    image: gstd-node:local
     build: .
     container_name: gstd-node
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - gstd-data:/data/gstdbot
     environment:
       - NODE_ENV=production
       - GSTD_API_PORT=8080
       - SWARM_ENABLED=true
-      - GSTD_MEMORY=true
+      - GSTD_MEMORY=false
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - GSTD_WALLET_ADDRESS=${GSTD_WALLET_ADDRESS:-}
       # Optional: Set your node name
       # - NODE_NAME=my-gstd-node
-      # Optional: Telegram bot token
-      # - TELEGRAM_BOT_TOKEN=your_token
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s

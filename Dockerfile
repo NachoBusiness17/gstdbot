@@ -8,12 +8,12 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps 2>/dev/null || npm install --legacy-peer-deps
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ ./src/
 
-RUN node_modules/.bin/tsc --skipLibCheck
+RUN node_modules/.bin/tsc
 
 # ─── Stage 2: Runtime ────────────────────────────────
 FROM node:22-alpine
@@ -24,7 +24,7 @@ RUN apk add --no-cache curl git bash tini
 
 # Production dependencies only
 COPY package*.json ./
-RUN npm ci --omit=dev --legacy-peer-deps 2>/dev/null || npm install --omit=dev --legacy-peer-deps
+RUN npm ci --omit=dev
 
 # Copy built application
 COPY --from=builder /app/dist/ ./dist/
@@ -35,13 +35,15 @@ COPY scripts/ ./scripts/
 COPY skills/ ./skills/
 
 # Create data directory for persistent storage
-RUN mkdir -p /data/gstdbot && mkdir -p /app/data
+RUN mkdir -p /data/gstdbot /app/data && chown -R node:node /data/gstdbot /app/data
 
 # ─── Environment ─────────────────────────────────────
 ENV NODE_ENV=production
 ENV GSTD_API_PORT=8080
 ENV SWARM_ENABLED=true
-ENV GSTD_MEMORY=true
+ENV GSTD_MEMORY=false
+ENV GSTD_CONFIG_DIR=/data/gstdbot
+ENV HOME=/data/gstdbot
 ENV GSTD_DATA_DIR=/data/gstdbot
 
 # ─── Expose & Health ─────────────────────────────────
@@ -55,10 +57,12 @@ LABEL org.opencontainers.image.title="GSTD Node OS"
 LABEL org.opencontainers.image.description="Sovereign AI Node — earn GSTD by processing AI queries"
 LABEL org.opencontainers.image.url="https://app.gstdtoken.com"
 LABEL org.opencontainers.image.source="https://github.com/gstdcoin/gstdbot"
-LABEL org.opencontainers.image.version="3.5.0"
+LABEL org.opencontainers.image.version="3.6.0"
 LABEL org.opencontainers.image.vendor="GSTD"
 
 ENV NODE_OPTIONS="--no-deprecation"
+
+USER node
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]

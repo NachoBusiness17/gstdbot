@@ -28,6 +28,9 @@ jobs:
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Installer syntax
+        run: bash -n install.sh
+
       - name: TypeScript check
         run: node_modules/.bin/tsc --noEmit
 

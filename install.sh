@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-# GSTD Node OS — One-Command Installer v3.5
+# GSTD Node OS — One-Command Installer v3.6
 # curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash
 #
 # ✅ Fully automatic — no interactive prompts
@@ -12,7 +12,7 @@
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-VERSION="3.5.0"
+VERSION="3.6.0"
 INSTALL_DIR="${GSTD_INSTALL_DIR:-$HOME/gstdbot}"
 CONFIG_DIR="$HOME/.config/gstdbot"
 STATE_FILE="$CONFIG_DIR/.install_state"
@@ -20,7 +20,7 @@ LOG_FILE="$CONFIG_DIR/install.log"
 API_URL="https://app.gstdtoken.com/api/v1"
 REPO_URL="https://github.com/gstdcoin/gstdbot.git"
 DASH_PORT="${GSTD_PORT:-8080}"
-MODE="${GSTD_MODE:-cloud}"
+MODE="${GSTD_MODE:-sovereign}"
 
 # ─── Colors ──────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -277,14 +277,14 @@ cd "$INSTALL_DIR"
 
 # Always run npm install (fast if nothing changed)
 # --no-audit: suppress vulnerability report (we audit and fix in CI — safe to omit here)
-npm install --no-audit --legacy-peer-deps >>"$LOG_FILE" 2>&1 || npm install --no-audit >>"$LOG_FILE" 2>&1 || {
-    err "npm install failed; existing dependencies and lockfile were preserved. Check: $LOG_FILE"
+npm ci --no-audit >>"$LOG_FILE" 2>&1 || {
+    err "Dependency installation failed. The committed lockfile was not rewritten. Check: $LOG_FILE"
     exit 1
 }
 info "Dependencies ✓"
 
 # Always rebuild TypeScript (fast if nothing changed)
-node_modules/.bin/tsc >>"$LOG_FILE" 2>&1 || node_modules/.bin/tsc --skipLibCheck >>"$LOG_FILE" 2>&1 || {
+node_modules/.bin/tsc >>"$LOG_FILE" 2>&1 || {
     err "TypeScript build failed. Check: $LOG_FILE"
     exit 1
 }
@@ -340,10 +340,10 @@ cat > "$CONFIG_DIR/config.json" << CONF
   "memory": {
     "redisUrl": "redis://localhost:6379",
     "chromaUrl": "http://localhost:8000",
-    "enabled": true
+    "enabled": false
   },
   "apps": {
-    "enabled": true,
+    "enabled": false,
     "dataDir": "${CONFIG_DIR}/apps"
   }
 }
@@ -362,7 +362,7 @@ if [ ! -f "$INSTALL_DIR/.env" ] && [ -f "$INSTALL_DIR/.env.example" ]; then
         sed -i "s|^GSTD_WALLET_ADDRESS=.*|GSTD_WALLET_ADDRESS=${GSTD_WALLET_ADDRESS}|" "$INSTALL_DIR/.env"
         info "Wallet address set: ${GSTD_WALLET_ADDRESS:0:12}..."
     else
-        warn "GSTD_WALLET_ADDRESS not set — run /wallet in @gstdaibot to link your earnings address"
+        warn "GSTD_WALLET_ADDRESS not set — set your public TON address as GSTD_WALLET_ADDRESS before accepting paid work"
     fi
     info ".env configured"
 fi
@@ -372,39 +372,8 @@ fi
 # ═══════════════════════════════════════════════════════════════
 step 6 "Registering with GSTD Swarm..."
 
-(curl -s -X POST "${API_URL}/nodes/register" \
-    -H "Content-Type: application/json" \
-    -d "{\"node_id\":\"${NODE_ID}\",\"node_name\":\"${NODE_NAME}\",\"mode\":\"${MODE}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"ram_mb\":${TOTAL_RAM_MB:-0},\"version\":\"${VERSION}\"}" \
-    --connect-timeout 5 --max-time 10 >/dev/null 2>&1) &
-info "Node registered (or will auto-register on heartbeat)"
-
-# ═══════════════════════════════════════════════════════════════
-# STEP 6.5: IPFS (Kubo) Setup — decentralized storage
-# ═══════════════════════════════════════════════════════════════
-IPFS_BIN="$HOME/ipfs-bin/ipfs"
-IPFS_PATH="$HOME/.ipfs"
-if [ ! -f "$IPFS_BIN" ]; then
-    info "Installing IPFS (Kubo)..."
-    mkdir -p "$HOME/ipfs-bin"
-    IPFS_ARCH="amd64"
-    case "$(uname -m)" in arm64|aarch64) IPFS_ARCH="arm64";; esac
-    KUBO_VER="v0.32.1"
-    KUBO_URL="https://dist.ipfs.tech/kubo/${KUBO_VER}/kubo_${KUBO_VER}_linux-${IPFS_ARCH}.tar.gz"
-    if curl -fsSL "$KUBO_URL" | tar -xz -C /tmp/kubo-tmp --strip-components=1 kubo/ipfs 2>/dev/null; then
-        mv /tmp/kubo-tmp/ipfs "$IPFS_BIN" && chmod +x "$IPFS_BIN"
-        info "IPFS binary installed"
-    else
-        warn "IPFS download failed — storage will be disabled"
-    fi
-fi
-
-if [ -f "$IPFS_BIN" ] && [ ! -d "$IPFS_PATH/config" ] && [ ! -f "$IPFS_PATH/config" ]; then
-    info "Initializing IPFS repository..."
-    IPFS_PATH="$IPFS_PATH" "$IPFS_BIN" init --profile=lowpower 2>/dev/null || true
-    IPFS_PATH="$IPFS_PATH" "$IPFS_BIN" config --json Datastore.StorageMax '"10GB"' 2>/dev/null || true
-    IPFS_PATH="$IPFS_PATH" "$IPFS_BIN" config --json Swarm.ConnMgr.HighWater 20 2>/dev/null || true
-    info "IPFS initialized"
-fi
+info "Registration is performed by the running node with its persistent Ed25519 identity."
+# IPFS storage and bridge daemons are not installed by the compute profile.
 
 # Set up Cloudflare Tunnel binary for public node access.
 if [ -f "$INSTALL_DIR/tunnel.sh" ] && [ ! -x "$INSTALL_DIR/tunnel.sh" ]; then
@@ -412,9 +381,10 @@ if [ -f "$INSTALL_DIR/tunnel.sh" ] && [ ! -x "$INSTALL_DIR/tunnel.sh" ]; then
 fi
 if [ ! -f "$INSTALL_DIR/cloudflared" ]; then
     ARCH=$(uname -m)
-    CF_ARCH="amd64"; [ "$ARCH" = "aarch64" ] && CF_ARCH="arm64"
+    CF_ARCH="amd64"; case "$ARCH" in aarch64|arm64) CF_ARCH="arm64";; esac
+    CF_OS="linux"; [ "$(uname -s)" = "Darwin" ] && CF_OS="darwin"
     info "Downloading cloudflared ($CF_ARCH)..."
-    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-${CF_OS}-${CF_ARCH}" \
         -o "$INSTALL_DIR/cloudflared" && chmod +x "$INSTALL_DIR/cloudflared" \
         && info "cloudflared installed" \
         || warn "cloudflared download failed — tunnel may not work"
@@ -438,10 +408,10 @@ install_ollama() {
         return 0
     fi
     info "Installing Ollama..."
-    if curl -fsSL https://ollama.ai/install.sh | sh >/dev/null 2>&1; then
+    if curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1; then
         info "Ollama installed ✓"
     else
-        warn "Ollama install failed — install manually: https://ollama.ai"
+        warn "Ollama install failed — install manually: https://ollama.com"
         return 1
     fi
 }
@@ -554,19 +524,6 @@ if [ -n "$SYSTEMD_MODE" ]; then
         sleep 3
         sudo systemctl is-active --quiet gstd-node 2>/dev/null && USED_SYSTEMD=true
 
-        # Bridge validator is optional: only create its unit when the binary exists
-        if [ -x "${CONFIG_DIR}/bridge/gstd-bridge" ]; then
-            BRIDGE_TMP="$(mktemp)"
-            printf '%s\n' "[Unit]" "Description=GSTD Bridge Validator Node (TON<->SOL<->XRP)" "After=network-online.target" "" \
-                "[Service]" "Type=simple" "User=$(whoami)" "WorkingDirectory=${CONFIG_DIR}/bridge" \
-                "ExecStart=${CONFIG_DIR}/bridge/gstd-bridge" "Restart=always" "RestartSec=5" "Environment=RUST_LOG=info" "" \
-                "[Install]" "WantedBy=multi-user.target" > "$BRIDGE_TMP"
-            sudo install -m 644 "$BRIDGE_TMP" /etc/systemd/system/gstd-bridge.service 2>/dev/null && {
-                sudo systemctl daemon-reload 2>/dev/null
-                sudo systemctl enable --now gstd-bridge 2>/dev/null || true
-            }
-            rm -f "$BRIDGE_TMP"
-        fi
     else
         mkdir -p "$HOME/.config/systemd/user"
         install -m 644 "$UNIT_TMP" "$HOME/.config/systemd/user/gstd-node.service"
@@ -596,7 +553,6 @@ if [ "$USED_SYSTEMD" = false ]; then
         # Stop only gstdbot (leave ipfs/tunnel/ollama running — they have long uptime)
         pm2 delete gstdbot 2>/dev/null || true
         pm2 delete gstd-node 2>/dev/null || true
-        pm2 delete gstd-bridge 2>/dev/null || true
 
         # Start gstdbot from ecosystem.config.js (other apps already running — pm2 skips them)
         if [ -f "$INSTALL_DIR/ecosystem.config.js" ]; then
@@ -640,13 +596,6 @@ if [ "$USED_SYSTEMD" = false ]; then
         NODE_PID=$!
         echo "$NODE_PID" > "$CONFIG_DIR/node.pid"
 
-        # Run Bridge in background
-        if [ -f "$CONFIG_DIR/bridge/gstd-bridge" ]; then
-            cd "$CONFIG_DIR/bridge"
-            nohup ./gstd-bridge >> bridge.log 2>&1 &
-            echo "$!" > bridge.pid
-        fi
-
         sleep 3
         if kill -0 "$NODE_PID" 2>/dev/null; then
             info "Running in background (PID: $NODE_PID) — install PM2 for auto-restart"
@@ -680,8 +629,8 @@ case "\$1" in
         echo "Rolling back to previous version..."
         cd "\$INSTALL_DIR"
         git checkout HEAD@{1} 2>/dev/null || git checkout HEAD^ 2>/dev/null || { echo "Cannot rollback further."; exit 1; }
-        npm install --legacy-peer-deps --include=dev --quiet 2>/dev/null
-        node_modules/.bin/tsc --skipLibCheck 2>/dev/null
+        npm ci --include=dev --quiet || exit 1
+        node_modules/.bin/tsc || exit 1
         pm2 restart gstdbot 2>/dev/null || \$SYS_CMD restart gstd-node 2>/dev/null
         echo "Rollback complete."
         ;;
