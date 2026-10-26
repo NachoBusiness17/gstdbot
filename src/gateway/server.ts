@@ -938,9 +938,7 @@ export class OmegaGateway {
         // ─── Models list (OpenAI-compatible — includes installed Ollama models) ──
         this.app.get('/v1/models', async (_req, res) => {
             const networkModels = [
-                { id: 'auto', object: 'model', owned_by: 'gstd-swarm', description: 'Sovereign router — auto-selects best available node model', created: Math.floor(Date.now() / 1000) },
-                { id: 'gstd-collective', object: 'model', owned_by: 'gstd-swarm', description: 'Collective Intelligence — multi-node consensus synthesis', created: Math.floor(Date.now() / 1000) },
-                { id: 'gstd-node', object: 'model', owned_by: 'gstd-swarm', description: 'GSTD Network Node — decentralized inference', created: Math.floor(Date.now() / 1000) },
+                { id: 'auto', object: 'model', owned_by: 'gstd-swarm', description: 'Configured default model; the response reports the actual model used', created: Math.floor(Date.now() / 1000) },
             ];
             // Add installed local Ollama models so OpenAI-compatible clients discover them
             const ollamaModels = this._availableModels.map(id => ({
