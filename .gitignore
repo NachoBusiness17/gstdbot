@@ -25,3 +25,6 @@ wrangler.toml
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Runtime logs and rotated archives
+/logs/

@@ -303,3 +303,27 @@ describe('modern model advertisement',()=>{
   expect(body.models_loaded).toBeUndefined();
  });
 });
+
+
+describe('PlatformLink tunnel recovery', () => {
+    it('announces a changed URL once without increasing steady-state requests', async () => {
+        vi.useFakeTimers();
+        const pl = makePL();
+        let url = 'https://old.trycloudflare.com';
+        vi.spyOn(pl as any, 'readTunnelUrl').mockImplementation(() => url);
+        vi.spyOn(pl as any, 'register').mockResolvedValue(true);
+        const heartbeat = vi.spyOn(pl as any, 'runHeartbeat').mockResolvedValue(undefined);
+        await pl.start(120000);
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(heartbeat).not.toHaveBeenCalled();
+        url = 'https://new.trycloudflare.com';
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(heartbeat).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(heartbeat).toHaveBeenCalledTimes(1);
+        await pl.stop();
+        url = 'https://after-stop.trycloudflare.com';
+        await vi.advanceTimersByTimeAsync(120000);
+        expect(heartbeat).toHaveBeenCalledTimes(1);
+    });
+});

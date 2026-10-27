@@ -58,6 +58,7 @@ export class PlatformLink extends EventEmitter {
     private walletAddress: string;
     private version: string;
     private heartbeatTimer: NodeJS.Timeout | null = null;
+    private tunnelTimer: NodeJS.Timeout | null = null;
     private heartbeatInFlight: Promise<void> | null = null;
     private taskPollInFlight: Promise<void> | null = null;
     private registrationRetryTimer: NodeJS.Timeout | null = null;
@@ -127,7 +128,18 @@ export class PlatformLink extends EventEmitter {
         if (!this.walletAddress) {
             await new Promise(resolve => setTimeout(resolve, 6000));
         }
+        let observedTunnelUrl = this.readTunnelUrl();
         await this.register();
+
+        // Local file checks cost no platform requests. Announce a changed tunnel
+        // once, rather than routing to a dead URL until the next regular heartbeat.
+        this.tunnelTimer = setInterval(() => {
+            const current = this.readTunnelUrl();
+            if (!current || current === observedTunnelUrl) return;
+            observedTunnelUrl = current;
+            void this.runHeartbeat();
+        }, 5000);
+        this.tunnelTimer.unref();
 
         // Start heartbeat loop
         this.heartbeatTimer = setInterval(() => { void this.runHeartbeat(); }, intervalMs);
@@ -516,9 +528,11 @@ export class PlatformLink extends EventEmitter {
     async stop(): Promise<void> {
         this.taskLoopEnabled = false;
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        if (this.tunnelTimer) clearInterval(this.tunnelTimer);
         if (this.taskTimer) clearTimeout(this.taskTimer);
         if (this.registrationRetryTimer) clearTimeout(this.registrationRetryTimer);
         this.heartbeatTimer = null;
+        this.tunnelTimer = null;
         this.taskTimer = null;
         this.registrationRetryTimer = null;
         await Promise.all(
