@@ -63,3 +63,26 @@ describe('rollbackNodeUpdate', () => {
         expect(run).not.toHaveBeenCalled();
     });
 });
+
+
+describe('signed update target', () => {
+    function git() {
+        return vi.fn<GitRunner>((args) => {
+            if (args[0] === 'rev-parse' && args[1] === 'HEAD') return currentHash;
+            if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'false';
+            if (args[0] === 'rev-parse' && args[1] === 'FETCH_HEAD') return targetHash;
+            return '';
+        });
+    }
+    it('rejects a different signed target before touching the working tree', () => {
+        const run = git();
+        expect(() => fastForwardNodeUpdate('node-dir', 'main', run, 'c'.repeat(40)))
+            .toThrow('does not match the signed update manifest');
+        expect(run.mock.calls.some(([args]) => args[0] === 'merge' || args[0] === 'reset')).toBe(false);
+    });
+    it('allows the exact signed target', () => {
+        const run = git();
+        expect(fastForwardNodeUpdate('node-dir', 'main', run, targetHash).updatedHash).toBe(targetHash);
+        expect(run).toHaveBeenCalledWith(['merge', '--ff-only', targetHash], 'node-dir');
+    });
+});

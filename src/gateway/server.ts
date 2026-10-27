@@ -641,21 +641,10 @@ export class OmegaGateway {
 
                 logActivity(`Starting self-update from origin/${branch}...`, 'info');
 
-                const update = fastForwardNodeUpdate(installDir, branch);
+                const update = fastForwardNodeUpdate(installDir, branch, undefined, manifest?.commit);
                 const preUpdateHash = update.previousHash;
                 const originalHash = update.updatedHash;
                 const pullOutput = update.output;
-
-                // If a manifest was provided, verify the pulled commit matches exactly
-                if (manifest) {
-                    const actualCommit = originalHash; // originalHash is HEAD right after the pull
-                    if (actualCommit !== manifest.commit) {
-                        rollbackNodeUpdate(installDir, preUpdateHash);
-                        throw new Error(
-                            `Pulled commit ${actualCommit.slice(0, 8)} does not match manifest ${manifest.commit.slice(0, 8)} — rolled back`,
-                        );
-                    }
-                }
 
                 // Step 3: Install deps & Build (strict check)
                 try {
@@ -2131,6 +2120,7 @@ export class OmegaGateway {
 
         this.app.post('/api/node/update', async (req, res) => {
             if (!requireNodeAuth(req, res)) return;
+            if (computeLoad().active > 0) return res.status(409).json({error:'compute_busy'});
             // ── Manifest signature gate ───────────────────────────
             const manifest: UpdateManifest | undefined = req.body?.manifest;
             const enforced = process.env.PLATFORM_SIGNING_ENFORCED === 'true';
@@ -2142,12 +2132,9 @@ export class OmegaGateway {
                 logActivity('Update requested without a signed manifest — permissive mode', 'warn');
             }
             // ─────────────────────────────────────────────────────
-            // NOTE: manifest.commit is signature-verified but NOT checked against the
-            // pulled HEAD after the pull — this route has no rollback infrastructure.
-            // See /api/update for the full commit-match + rollback path.
             try {
                 const cwd = join(__dirname, '../..');
-                const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd));
+                const update = fastForwardNodeUpdate(cwd, getDefaultBranch(cwd), undefined, manifest?.commit);
                 try {
                     execSync('npm ci --include=dev', { cwd, timeout: 120000, stdio: 'pipe' });
                     execSync('npm run build', { cwd, timeout: 60000, stdio: 'pipe' });

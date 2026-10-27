@@ -22,6 +22,7 @@ export function fastForwardNodeUpdate(
     installDir: string,
     branch: string,
     run: GitRunner = runGit,
+    expectedCommit?: string,
 ): NodeUpdateResult {
     const dirtyFiles = run(['status', '--porcelain', '--untracked-files=no'], installDir).trim();
     if (dirtyFiles) {
@@ -39,6 +40,10 @@ export function fastForwardNodeUpdate(
 
     const targetHash = run(['rev-parse', 'FETCH_HEAD'], installDir).trim();
     if (!isCommitHash(targetHash)) throw new Error('Unable to determine fetched Git commit');
+    if (expectedCommit !== undefined && (!isCommitHash(expectedCommit)
+        || targetHash.toLowerCase() !== expectedCommit.toLowerCase())) {
+        throw new Error('Fetched commit does not match the signed update manifest; update refused');
+    }
 
     if (previousHash !== targetHash) {
         try {
