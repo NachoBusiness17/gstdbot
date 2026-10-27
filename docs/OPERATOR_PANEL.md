@@ -69,3 +69,18 @@ Open the dashboard printed by the installer (normally port 8080; this machine us
 - **Updates:** manual Git source updates require npm, a successful build and PM2/systemd. Docker uses an image rebuild.
 - **Hardware:** Linux x86-64/ARM64 and WSL2 are primary targets. Use `bash install.sh --check` before installation. Native Windows and 32-bit ARM are unsupported by this Bash installer; macOS is best-effort. Model runtime and GPU drivers need validation.
 - **Multiple Linux machines:** use `scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --plan` to validate an inventory before installation. SSH and known_hosts must already be configured. Each host gets an independent identity. The current platform cap is 10 live identities per registration wallet. Public paid inference requires a reachable HTTPS endpoint per node; automatic tunnels and tensor-parallel multi-host execution are not provided. No physical cluster was available for an end-to-end deployment test.
+
+## Local and network model directory
+
+The model directory combines reviewed download choices, locally installed models and live platform availability. Select **Check network models** to query the platform; this is manual, cached for 60 seconds and shared across concurrent requests. Unknown registry status is distinct from zero available nodes. Local catalog reads remain offline.
+
+The chat selector includes advertised network models after this check. Selecting a remote model does not grant permission to forward the question: explicitly select **Allow other GSTD nodes**. A paid remote model opens a separate workflow on the platform for wallet authentication and funded reservation; the operator panel does not charge a wallet or bypass accounting. Local use of a locally installed model remains local.
+
+Exact model requests fail with `requested_model_unavailable` when unavailable or when an executor reports a different model. Select another model yourself to consent to using it. `auto` remains an explicit choice of the configured default.
+
+Public discovery APIs:
+- `https://app.gstdtoken.com/api/v1/models/available`: live models, node counts and catalogue prices.
+- `https://app.gstdtoken.com/api/v1/nodes/list`: public node IDs and their current URLs. Temporary tunnel URLs may change.
+- A node exposes `GET /v1/models` and `POST /v1/chat/completions`; operator controls require a PIN session.
+
+The private `GET /api/node/model-directory` endpoint supplies cached network model data to the dashboard. The reviewed installation catalogue is not a complete internet index. Manual Ollama names remain available; compatibility is unknown for unreviewed models. Hardware matching is an estimate, not a driver or performance guarantee.
