@@ -16,7 +16,7 @@ it('renders the actual catalog and keeps personal-wallet linking visible on an e
  for(const m of html.matchAll(/id="([^"]+)"/g))elements.set(m[1],new Element());
  const labels=[...html.matchAll(/data-i="([^"]+)"/g)].map(m=>{const e=new Element();e.dataset.i=m[1];return e;});
  const h:CatalogHardware={total_ram:8*1024**3,available_ram:6*1024**3,disk_free:20*1024**3,cpu_cores:4,gpu_vram:0,gpu_name:null,local_runtime:true,platform:'linux',arch:'arm64'};
- const catalog={hardware:h,models:modelCatalog().map(m=>({...m,compatibility:compatibility(m,h)}))};
+ const catalog={hardware:h,network:{models:[{model_id:'remote:large',nodes_count:1,price_gstd:0.1}]},models:modelCatalog().map(m=>({...m,compatibility:compatibility(m,h)}))};
  const address='0:'+'77'.repeat(32);
  let bound:any=null;
  const fetcher=vi.fn(async(path:string,options:any)=>{
@@ -48,4 +48,11 @@ it('renders the actual catalog and keeps personal-wallet linking visible on an e
  expect(elements.get('payout')!.textContent).toBe(address);
  expect(elements.get('identityWallet')!.textContent).toContain('88'.repeat(32));
  expect(labels.every(e=>e.textContent!==e.dataset.i)).toBe(true);
+ elements.get('model')!.value='remote:large';elements.get('model')!.onchange();
+ expect(elements.get('networkPrice')!.textContent).toContain('0.1 GSTD');
+ elements.get('question')!.value='test';elements.get('privacy')!.value='local';
+ await elements.get('send')!.onclick();expect(elements.get('notice')!.textContent).toContain('Разрешить другие ноды');
+ elements.get('privacy')!.value='network';await elements.get('send')!.onclick();
+ expect(elements.get('notice')!.textContent).toContain('резервирования GSTD');
+ expect(fetcher.mock.calls.some(([path])=>path==='/v1/chat/completions')).toBe(false);
 });

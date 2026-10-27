@@ -7,8 +7,8 @@ describe('compute node boundaries',()=>{
     it.each(['/v1/chat/completions','/health','/api/auth/login'])('retains core entry point %s',path=>expect(nodeSurface(path)).toBe('public'));
     it('never uploads a private prompt when local inference fails',async()=>{
         const fetcher=vi.fn().mockRejectedValue(new Error('local unavailable'));vi.stubGlobal('fetch',fetcher);
-        const result=await new NeuralRouter('',false).route('auto',[{role:'user',content:'private content'}]);
-        expect(result.tier).toBe('fallback');expect(fetcher).toHaveBeenCalledTimes(1);
+        await expect(new NeuralRouter('',false).route('auto',[{role:'user',content:'private content'}])).rejects.toThrow('requested_model_unavailable');
+        expect(fetcher).toHaveBeenCalledTimes(1);
         expect(String(fetcher.mock.calls[0][0])).toContain('127.0.0.1:11434');
     });
 });

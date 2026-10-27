@@ -35,7 +35,7 @@ describe('NeuralRouter canonical task queue', () => {
     await router.route('llama3.2:3b',first,undefined,{cache:true});
     expect((await router.route('llama3.2:3b',first,undefined,{cache:true})).tier).toBe('cache');
     expect((await router.route('llama3.2:3b',second,undefined,{cache:true})).tier).toBe('gstd');
-    expect((await router.route('other:model',second,undefined,{cache:true})).tier).toBe('gstd');
+    await expect(router.route('other:model',second,undefined,{cache:true})).rejects.toThrow('requested_model_unavailable');
     expect(request).toHaveBeenCalledTimes(3);
   });
   it('preserves the requested generation limits on local fallback', async () => {
@@ -46,4 +46,10 @@ describe('NeuralRouter canonical task queue', () => {
     await new NeuralRouter('',false).route('llama3.2:3b',[{role:'user',content:'hello'}],undefined,{maxTokens:9,temperature:0});
     expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({options:{num_ctx:2048,num_predict:9,temperature:0},keep_alive:-1});
   });
+});
+
+it('fails explicitly when the requested model cannot run instead of returning a success placeholder', async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({error:'not found'},404)));
+ await expect(new NeuralRouter('',false).route('missing:model',[{role:'user',content:'hello'}]))
+  .rejects.toMatchObject({message:'requested_model_unavailable',status:503});
 });

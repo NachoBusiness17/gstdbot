@@ -255,6 +255,8 @@ export class PlatformLink extends EventEmitter {
                     wallet_address:  this.walletAddress,
                     node_name:       process.env.NODE_NAME || this.nodeId,
                     node_version:    this.version,
+                    platform: process.platform, arch: process.arch,
+                    cpu_cores: cpus().length, ram_mb: Math.round(totalmem()/1024/1024),
                     uptime_hours:    Math.round(process.uptime() / 3600),
                     queries_served:  stats.queryCount || 0,
                     capabilities:    models,

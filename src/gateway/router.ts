@@ -172,8 +172,10 @@ export class NeuralRouter {
     async route(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
         if(isCloudModel(requestedModel))throw Error('cloud_models_disabled');
         const result = await this.routeInternal(requestedModel, messages, telegramId, options);
-        const isRealSubstitution = requestedModel !== 'auto' && result.model !== requestedModel;
-        return isRealSubstitution ? { ...result, requestedModel } : result;
+        if (requestedModel !== 'auto' && result.model !== toOllamaModel(requestedModel)) {
+            throw Object.assign(new Error('requested_model_unavailable'), { status: 503 });
+        }
+        return result;
     }
 
     private async routeInternal(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
@@ -237,14 +239,7 @@ export class NeuralRouter {
         }
 
         } // Network forwarding requires explicit user consent.
-        // ─── L5: Fallback ───────────────────────────────────────────
-        return {
-            content: '🐝 The GSTD Swarm is initialising. Please send your message again in a moment.',
-            model: 'fallback',
-            tier: 'fallback',
-            latencyMs: Date.now() - start,
-            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        };
+        throw Object.assign(new Error('requested_model_unavailable'), { status: 503 });
     }
 
     // ─── GSTD task queue: submit → poll until complete ───────────

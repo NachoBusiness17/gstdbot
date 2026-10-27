@@ -1,3 +1,4 @@
+import {networkModels} from '../lib/network-models.js';
 import {setupTokenFor} from '../security/setup-token.js';
 import {isCloudModel} from '../lib/local-model-options.js';
 import {modelCatalog,refreshModelCatalog,catalogHardware,compatibility} from '../lib/model-catalog.js';
@@ -981,6 +982,7 @@ export class OmegaGateway {
                 }
             } catch (err: any) {
                 if(err instanceof ComputeCapacityError){res.setHeader('Retry-After','5');res.status(429).json({error:{message:err.message,type:'capacity_error'}});return;}
+                if (err?.message === 'requested_model_unavailable') { res.status(503).json({ error: { message: 'requested_model_unavailable', type: 'model_unavailable' } }); return; }
                 console.error('[Gateway] Error:', err.message);
                 res.status(500).json({ error: { message: err.message, type: 'internal_error' } });
             }
@@ -4311,9 +4313,10 @@ const d=await r.json();ai.textContent=d.choices?.[0]?.message?.content||'No resp
             return {hardware,models:modelCatalog().map(m=>({...m,compatibility:compatibility(m,hardware)})),
                 refreshed_at:new Date().toISOString(),estimate_only:true};
         };
-        this.app.get('/api/ollama/catalog', (_req,res)=>res.json(catalogResponse()));
+        this.app.get('/api/ollama/catalog', async (_req,res)=>res.json(await catalogResponse()));
+        this.app.get('/api/node/model-directory', async (_req,res)=>res.json({network:await networkModels(this.config.swarmUrl)}));
         this.app.post('/api/ollama/catalog/refresh', async (_req,res)=>{
-            await refreshModelCatalog();res.json(catalogResponse());
+            await refreshModelCatalog();res.json(await catalogResponse());
         });
 
         // GET /api/ollama/models — installed + catalog
