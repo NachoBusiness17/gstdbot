@@ -8,7 +8,7 @@ class Element {
  classes=new Set<string>();
  classList={add:(x:string)=>this.classes.add(x),remove:(x:string)=>this.classes.delete(x),toggle:(x:string,on:boolean)=>on?this.classes.add(x):this.classes.delete(x)};
  replaceChildren(...items:any[]){this.children=items;}append(...items:any[]){this.children.push(...items);}add(item:any){this.children.push(item);}
- removeAttribute(){}setAttribute(){}
+ attributes:Record<string,string>={};removeAttribute(){}setAttribute(key:string,value:string){this.attributes[key]=value}
 }
 function storage(initial:Record<string,string>){const m=new Map(Object.entries(initial));return{getItem:(k:string)=>m.get(k)||null,setItem:(k:string,v:string)=>m.set(k,v),removeItem:(k:string)=>m.delete(k)}}
 it('renders the actual catalog and keeps personal-wallet linking visible on an existing node',async()=>{
@@ -41,6 +41,8 @@ it('renders the actual catalog and keeps personal-wallet linking visible on an e
  choice.value='qwen3.5:27b';choice.onchange();expect(elements.get('install')!.disabled).toBe(true);
  choice.value='qwen3.5:2b';choice.onchange();expect(elements.get('install')!.disabled).toBe(false);
  expect(elements.get('walletForm')!.classes.has('hidden')).toBe(false);
+ expect(elements.get('paymentsLink')!.attributes.href).toBe('https://app.gstdtoken.com/ru/payments?from=node');
+ expect(elements.get('balanceLink')!.attributes.href).not.toContain(address);
  expect(elements.get('payout')!.textContent).toContain('ещё не привязан');
  elements.get('walletAddress')!.value=address;elements.get('walletConsent')!.checked=true;
  elements.get('walletConsent')!.onchange();await elements.get('bind')!.onclick();
