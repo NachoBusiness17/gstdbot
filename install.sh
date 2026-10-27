@@ -189,8 +189,8 @@ step 1 "Detecting system..."
 
 OS="unknown"; ARCH=$(uname -m); PKG=""
 if [ -f /etc/os-release ]; then
-    . /etc/os-release; OS=$ID
-    case $ID in
+    OS=$(. /etc/os-release; printf '%s' "$ID")
+    case $OS in
         ubuntu|debian|pop|linuxmint|raspbian) PKG="apt";;
         fedora|centos|rhel|rocky|alma) PKG="dnf";;
         arch|manjaro|endeavouros) PKG="pacman";;
@@ -737,12 +737,12 @@ echo -e "  ${BOLD}👉 Open your node dashboard:${NC}"
 
 # Try to find the Cloudflare tunnel URL from pm2 logs
 TUNNEL_URL=""
-if command -v pm2 &>/dev/null; then
-    TUNNEL_URL=$(pm2 logs tunnel --lines 100 --nostream 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+if command -v pm2 &>/dev/null && pm2 describe tunnel >/dev/null 2>&1; then
+    TUNNEL_URL=$(pm2 logs tunnel --lines 100 --nostream 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || true)
 fi
 
 # Local LAN IP
-LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 
 echo -e "     ${CYAN}http://localhost:${DASH_PORT}${NC}  (same machine)"
 if [ -n "$LOCAL_IP" ]; then

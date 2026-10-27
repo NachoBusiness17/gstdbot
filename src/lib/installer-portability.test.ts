@@ -52,3 +52,15 @@ it('parses inline env comments and preserves explicit runtime overrides',()=>{
  const output=execFileSync(process.execPath,['-e','const fs=require("fs");\n'+fn+'\nconsole.log(JSON.stringify(loadEnv(process.argv[1])))',file],{encoding:'utf8',env:{...process.env,GSTD_FIXTURE_OVERRIDE:'runtime'}});
  expect(JSON.parse(output)).toEqual({GSTD_FIXTURE_URL:'https://example.test',GSTD_FIXTURE_OVERRIDE:'runtime'});
 });
+it.skipIf(process.platform==='win32')('OS detection does not overwrite the application version',()=>{
+ const source=readFileSync('install.sh','utf8');
+ const section=source.slice(source.indexOf('OS="unknown";'),source.indexOf('# Detect WSL'));
+ const out=execFileSync('bash',['-eu','-c','VERSION=gstd-test-version;\n'+section+'\nprintf "%s" "$VERSION"'],{encoding:'utf8'});
+ expect(out).toBe('gstd-test-version');
+});
+it.skipIf(process.platform==='win32')('finishes successfully without a separate tunnel process',()=>{
+ const source=readFileSync('install.sh','utf8');
+ const section=source.slice(source.indexOf('# Try to find the Cloudflare tunnel URL'),source.indexOf('# Local LAN IP'));
+ const out=execFileSync('bash',['-euo','pipefail','-c','pm2(){ return 1; };\n'+section+'\nprintf "finished"'],{encoding:'utf8'});
+ expect(out).toBe('finished');
+});
