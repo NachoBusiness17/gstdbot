@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════
 # GSTD Node OS — Production Dockerfile
-# Ready-to-run: docker run -p 8080:8080 ghcr.io/gstdcoin/gstd-node:latest
+# Build from this checkout: docker compose up -d --build
 # ═══════════════════════════════════════════════════════
 
 # ─── Stage 1: Build ──────────────────────────────────

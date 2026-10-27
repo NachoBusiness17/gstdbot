@@ -6,15 +6,10 @@ const os   = require('os');
 function loadEnv(filePath) {
   const env = {};
   if (!fs.existsSync(filePath)) return env;
-  fs.readFileSync(filePath, 'utf8').split('\n').forEach(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return;
-    const eq = trimmed.indexOf('=');
-    if (eq === -1) return;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-    if (key) env[key] = val;
-  });
+  const parsed = require('node:util').parseEnv(fs.readFileSync(filePath, 'utf8'));
+  for (const [key, value] of Object.entries(parsed)) {
+    env[key] = process.env[key] === undefined ? value : process.env[key];
+  }
   return env;
 }
 

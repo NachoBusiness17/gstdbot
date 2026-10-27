@@ -1,0 +1,28 @@
+name: Fresh source installer smoke
+on:
+  push:
+    branches: [main]
+    paths: ['install.sh', 'scripts/install.sh', 'scripts/installer-smoke.sh', 'package*.json', 'src/**', 'web/**', 'data/**', '.github/workflows/installer-smoke.yml']
+  pull_request:
+    paths: ['install.sh', 'scripts/install.sh', 'scripts/installer-smoke.sh', 'package*.json', 'src/**', 'web/**', 'data/**', '.github/workflows/installer-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: source-installer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fresh-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned public source in a clean root container without host credentials
+        run: |
+          docker run --rm --init \
+            -v "$GITHUB_WORKSPACE:/source:ro" \
+            -e GSTD_INSTALLER_SMOKE=1 \
+            -e GSTD_INSTALL_REF="$(git rev-parse HEAD)" \
+            node:22-bookworm bash /source/scripts/installer-smoke.sh

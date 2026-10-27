@@ -13,6 +13,17 @@
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
+# Minimal root images may not include sudo. Keep normal-user sudo behaviour.
+sudo() {
+    if [ "$(id -u)" = 0 ]; then
+        while [ "${1:-}" = -E ] || [ "${1:-}" = -n ]; do shift; done
+        "$@"
+    else
+        command sudo "$@"
+    fi
+}
+
+
 VERSION="3.7.0"
 INSTALL_DIR="${GSTD_INSTALL_DIR:-$HOME/gstdbot}"
 CONFIG_DIR="$HOME/.config/gstdbot"
@@ -222,7 +233,7 @@ step 2 "Setting up Node.js..."
 need_nodejs() {
     if command -v node &>/dev/null; then
         local ver=$(node -v | sed 's/v//' | cut -d'.' -f1)
-        [ "${ver:-0}" -ge 20 ] 2>/dev/null && return 1  # already good
+        [ "${ver:-0}" -ge 20 ] 2>/dev/null && node -e 'process.exit(typeof require("node:util").parseEnv === "function" ? 0 : 1)' 2>/dev/null && return 1  # supported runtime
     fi
     return 0  # need install
 }
@@ -305,6 +316,11 @@ elif [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/package.json" ]; then
 else
     info "Cloning from GitHub..."
     git clone --depth 10 "$REPO_URL" "$INSTALL_DIR" 2>>"$LOG_FILE"
+    if [ -n "${GSTD_INSTALL_REF:-}" ]; then
+        [[ "$GSTD_INSTALL_REF" =~ ^[a-fA-F0-9]{40}$ ]] || { err "GSTD_INSTALL_REF must be a full commit SHA"; exit 2; }
+        git -C "$INSTALL_DIR" fetch --depth 1 origin "$GSTD_INSTALL_REF" >>"$LOG_FILE" 2>&1
+        git -C "$INSTALL_DIR" checkout --detach FETCH_HEAD >>"$LOG_FILE" 2>&1
+    fi
     info "Cloned to $INSTALL_DIR"
 fi
 
@@ -317,7 +333,7 @@ cd "$INSTALL_DIR"
 
 # Always run npm install (fast if nothing changed)
 # --no-audit: suppress vulnerability report (we audit and fix in CI — safe to omit here)
-npm ci --no-audit >>"$LOG_FILE" 2>&1 || {
+npm ci --include=dev --no-audit >>"$LOG_FILE" 2>&1 || {
     err "Dependency installation failed. The committed lockfile was not rewritten. Check: $LOG_FILE"
     exit 1
 }
@@ -340,54 +356,33 @@ step 5 "Configuring..."
 # Preserve existing nodeId if present
 NODE_ID=""
 if [ -f "$CONFIG_DIR/config.json" ]; then
-    NODE_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json')).get('nodeId',''))" 2>/dev/null || echo "")
+    NODE_ID=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(d.nodeId!==undefined&&typeof d.nodeId!=="string")throw Error("Invalid existing nodeId");console.log(d.nodeId||"")' "$CONFIG_DIR/config.json")
     # Preserve mode if not explicitly set
     if [ "$MODE" = "cloud" ]; then
-        SAVED_MODE=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json')).get('mode','cloud'))" 2>/dev/null || echo "cloud")
+        SAVED_MODE=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).mode||"sovereign")' "$CONFIG_DIR/config.json")
         MODE="$SAVED_MODE"
     fi
 fi
 
 if [ -z "$NODE_ID" ]; then
-    NODE_ID=$(python3 -c "import uuid; print(str(uuid.uuid4()))" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "node-$(date +%s)")
+    NODE_ID=$(node -e 'console.log(require("crypto").randomUUID())')
 fi
 
 NODE_NAME="${NODE_NAME:-${HOSTNAME:-$(hostname)}-node}"
 
-cat > "$CONFIG_DIR/config.json" << CONF
-{
-  "version": "${VERSION}",
-  "mode": "${MODE}",
-  "nodeId": "${NODE_ID}",
-  "nodeName": "${NODE_NAME}",
-  "installDir": "${INSTALL_DIR}",
-  "installedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "swarm": {
-    "enabled": true,
-    "maxCPU": 80,
-    "maxRAM": 70,
-    "apiUrl": "${API_URL}"
-  },
-  "dashboard": {
-    "host": "0.0.0.0",
-    "port": ${DASH_PORT},
-    "enabled": true
-  },
-  "ollama": {
-    "url": "http://localhost:11434",
-    "models": ["llama3.2:3b","llama3.1:8b","qwen2.5:7b","phi3:mini","gemma2:2b"]
-  },
-  "memory": {
-    "redisUrl": "redis://localhost:6379",
-    "chromaUrl": "http://localhost:8000",
-    "enabled": false
-  },
-  "apps": {
-    "enabled": false,
-    "dataDir": "${CONFIG_DIR}/apps"
-  }
-}
-CONF
+GSTD_CFG_FILE="$CONFIG_DIR/config.json" GSTD_CFG_VERSION="$VERSION" GSTD_CFG_MODE="$MODE" GSTD_CFG_ID="$NODE_ID" GSTD_CFG_NAME="$NODE_NAME" GSTD_CFG_INSTALL="$INSTALL_DIR" GSTD_CFG_API="$API_URL" GSTD_CFG_PORT="$DASH_PORT" node <<'NODECONFIG'
+const fs=require('fs'),e=process.env,file=e.GSTD_CFG_FILE;
+const old=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};
+const port=Number(e.GSTD_CFG_PORT);
+if(!Number.isInteger(port)||port<1||port>65535)throw Error('Invalid dashboard port');
+const config={...old,version:e.GSTD_CFG_VERSION,mode:e.GSTD_CFG_MODE,nodeId:e.GSTD_CFG_ID,nodeName:e.GSTD_CFG_NAME,installDir:e.GSTD_CFG_INSTALL,
+ installedAt:old.installedAt||new Date().toISOString(),
+ swarm:{enabled:true,maxCPU:80,maxRAM:70,...old.swarm,apiUrl:e.GSTD_CFG_API},
+ dashboard:{host:'0.0.0.0',enabled:true,...old.dashboard,port},
+ ollama:old.ollama||{url:'http://localhost:11434',models:[]},
+ memory:old.memory||{enabled:false},apps:old.apps||{enabled:false}};
+fs.writeFileSync(file,JSON.stringify(config,null,2)+'\n',{mode:0o600});fs.chmodSync(file,0o600);
+NODECONFIG
 info "Config: $MODE mode, port $DASH_PORT, ID: ${NODE_ID:0:8}..."
 
 # Copy .env if missing
@@ -527,7 +522,7 @@ info "Bridge Validator: available after TON mainnet deployment"
 # Try systemd first (Linux only): system unit with root/sudo, otherwise a per-user unit (no root needed)
 USED_SYSTEMD=false
 SYSTEMD_MODE=""
-if command -v systemctl &>/dev/null; then
+if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
     if [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; then
         SYSTEMD_MODE="system"
     elif systemctl --user show-environment &>/dev/null; then
@@ -602,7 +597,9 @@ if [ "$USED_SYSTEMD" = false ]; then
     # Install PM2 if not present
     if ! command -v pm2 &>/dev/null; then
         info "Installing PM2 process manager..."
-        npm install -g pm2 2>/dev/null || sudo npm install -g pm2 2>/dev/null
+        mkdir -p "$HOME/.local"
+        npm install --global --prefix "$HOME/.local" pm2 2>/dev/null || warn "Could not install PM2; trying the unmanaged fallback"
+        export PATH="$HOME/.local/bin:$PATH"
     fi
 
     if command -v pm2 &>/dev/null; then
@@ -674,13 +671,15 @@ fi
 cat > "$CLI_PATH" << CLISCRIPT
 #!/usr/bin/env bash
 INSTALL_DIR="$INSTALL_DIR"
+export PATH="\$HOME/.local/bin:\$PATH"
 SYS_CMD="sudo systemctl"; JOURNAL="sudo journalctl -u gstd-node -f"
+if [ "\$(id -u)" = "0" ]; then SYS_CMD="systemctl"; JOURNAL="journalctl -u gstd-node -f"; fi
 if [ "\$(id -u)" != "0" ] && ! sudo -n true 2>/dev/null; then SYS_CMD="systemctl --user"; JOURNAL="journalctl --user -u gstd-node -f"; fi
 
 case "\$1" in
     update)
         echo "Updating GSTD Node..."
-        curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | bash
+        curl -fsSL https://raw.githubusercontent.com/gstdcoin/gstdbot/main/install.sh | GSTD_INSTALL_DIR="\$INSTALL_DIR" GSTD_PORT="${DASH_PORT}" bash
         ;;
     rollback)
         echo "Rolling back to previous version..."
@@ -691,9 +690,14 @@ case "\$1" in
         pm2 restart gstdbot 2>/dev/null || \$SYS_CMD restart gstd-node 2>/dev/null
         echo "Rollback complete."
         ;;
-    restart) \$SYS_CMD restart gstd-node 2>/dev/null || kill \$(cat \$HOME/.config/gstdbot/node.pid) && cd "\$INSTALL_DIR" && node dist/index.js & ;;
-    status)  \$SYS_CMD status gstd-node 2>/dev/null ;;
-    logs)    \$JOURNAL 2>/dev/null || tail -f \$HOME/.config/gstdbot/node.log ;;
+    restart)
+        if \$SYS_CMD restart gstd-node 2>/dev/null; then exit 0; fi
+        if command -v pm2 >/dev/null && pm2 restart gstdbot 2>/dev/null; then exit 0; fi
+        echo "No managed node service found. Start the node with its original process manager." >&2
+        exit 1
+        ;;
+    status) if command -v pm2 >/dev/null && pm2 describe gstdbot >/dev/null 2>&1; then pm2 status gstdbot; else \$SYS_CMD status gstd-node; fi ;;
+    logs) if command -v pm2 >/dev/null && pm2 describe gstdbot >/dev/null 2>&1; then pm2 logs gstdbot; else \$JOURNAL 2>/dev/null || tail -f "\$HOME/.config/gstdbot/node.log"; fi ;;
     *)
         echo "GSTD Node CLI (v${VERSION})"
         echo "Usage: gstd-node {update|rollback|restart|status|logs}"
@@ -707,7 +711,7 @@ info "CLI tool installed: type 'gstd-node' to manage your node"
 # ─── Wait for dashboard ─────────────────────────────────────────
 READY=false
 for i in $(seq 1 10); do
-    if curl -s -o /dev/null -w '' "http://localhost:${DASH_PORT}/health" 2>/dev/null; then
+    if curl -fsS -o /dev/null -w '' "http://localhost:${DASH_PORT}/health" 2>/dev/null; then
         READY=true
         break
     fi

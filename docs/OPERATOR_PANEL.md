@@ -84,3 +84,11 @@ Public discovery APIs:
 - A node exposes `GET /v1/models` and `POST /v1/chat/completions`; operator controls require a PIN session.
 
 The private `GET /api/node/model-directory` endpoint supplies cached network model data to the dashboard. The reviewed installation catalogue is not a complete internet index. Manual Ollama names remain available; compatibility is unknown for unreviewed models. Hardware matching is an estimate, not a driver or performance guarantee.
+
+## Installation checks
+
+Use the root `install.sh` as the canonical entry point; `scripts/install.sh` delegates to it. `--check` performs read-only platform checks. Fresh installs may be pinned to an immutable full commit SHA with `GSTD_INSTALL_REF`; this applies to cloning a new checkout, not rewriting an existing installation.
+
+The installer uses Node.js for configuration, includes build dependencies even when `NODE_ENV=production`, preserves existing configuration fields and refuses malformed JSON. Systemd is selected only when its manager is present; otherwise PM2 is installed in the current user's `~/.local` prefix. Reboot startup still depends on the operating system's init/user-session setup. Prefer a dedicated unprivileged operator account for a real compute node.
+
+CI's fresh-source-installer check clones the exact public GitHub commit in a disposable Linux x86-64 container, builds and starts it, then checks first operator access and the packaged catalogue. It uses an Ollama fixture and downloads no real models: it does not certify GPU drivers, inference compatibility or every operating system/architecture. A separate offline container check covers packaged runtime startup without network access.
