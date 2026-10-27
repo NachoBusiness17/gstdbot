@@ -643,7 +643,6 @@ export class OmegaGateway {
 
                 const update = fastForwardNodeUpdate(installDir, branch, undefined, manifest?.commit);
                 const preUpdateHash = update.previousHash;
-                const originalHash = update.updatedHash;
                 const pullOutput = update.output;
 
                 // Step 3: Install deps & Build (strict check)
