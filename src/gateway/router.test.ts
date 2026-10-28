@@ -53,3 +53,21 @@ it('fails explicitly when the requested model cannot run instead of returning a 
  await expect(new NeuralRouter('',false).route('missing:model',[{role:'user',content:'hello'}]))
   .rejects.toMatchObject({message:'requested_model_unavailable',status:503});
 });
+
+
+it.each(['unknown-model', 'openai/gpt-oss-20b', 'qwen/qwen3-32b'])(
+ 'does not substitute an explicit model ID %s', async(model)=>{
+ const request = vi.fn().mockResolvedValue(response({error:'not found'},404));
+ vi.stubGlobal('fetch',request);
+ await expect(new NeuralRouter('',false).route(model,[{role:'user',content:'hello'}]))
+  .rejects.toMatchObject({message:'requested_model_unavailable',status:503});
+ expect(JSON.parse(request.mock.calls[0][1].body).model).toBe(model);
+});
+
+it('accepts Ollama latest-tag expansion without replacing the requested model', async()=>{
+ const request = vi.fn().mockResolvedValue(response({model:'custom:latest',message:{content:'answer'}}));
+ vi.stubGlobal('fetch',request);
+ await expect(new NeuralRouter('',false).route('custom',[{role:'user',content:'hello'}]))
+  .resolves.toMatchObject({model:'custom:latest',content:'answer'});
+ expect(JSON.parse(request.mock.calls[0][1].body).model).toBe('custom');
+});

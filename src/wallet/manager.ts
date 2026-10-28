@@ -80,10 +80,14 @@ export class NodeWallet {
         // Load or create wallet
         if (existsSync(this.walletFile)) {
             try {
-                this.wallet = JSON.parse(readFileSync(this.walletFile, 'utf-8'));
+                const saved = JSON.parse(readFileSync(this.walletFile, 'utf-8'));
+                if (!saved || typeof saved.address !== 'string') throw new Error('Invalid saved wallet');
+                const { Address } = require('@ton/core');
+                Address.parse(saved.address);
+                this.wallet = saved;
                 console.log('    Wallet: ' + this.wallet!.address.slice(0, 12) + '...');
             } catch (_e) {
-                this.createWallet();
+                throw new Error('Saved wallet is corrupt; restore its backup. Refusing to replace the payout identity.');
             }
         } else {
             this.createWallet();

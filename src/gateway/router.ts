@@ -20,11 +20,7 @@ export type RouteTier = 'cache' | 'gstd' | 'fallback';
 export interface RouteResult {
     content: string;
     model: string;
-    /** The model string the caller actually requested, before any local
-     *  substitution (e.g. toOllamaModel mapping a paid-provider model name
-     *  to a locally-hosted equivalent). Present whenever it differs from
-     *  `model`, so a caller can tell a substitution happened rather than
-     *  silently receiving a different model than they asked for. */
+    /** Retained for response compatibility; explicit models are never substituted. */
     requestedModel?: string;
     tier: RouteTier;
     latencyMs: number;
@@ -60,27 +56,15 @@ const GSTD_MODELS = [
 
 const DEFAULT_MODEL = process.env.GSTD_DEFAULT_MODEL || 'llama3.2:3b';
 
-// Map legacy Groq/OpenAI-style model IDs → Ollama model IDs.
-// Called when routing requests that use old model name conventions.
-const MODEL_MAP: Record<string, string> = {
-    'llama-3.3-70b-versatile':                      'llama3.1:70b',
-    'llama-3.1-70b-versatile':                      'llama3.1:70b',
-    'llama-3.1-8b-instant':                         'llama3.1:8b',
-    'llama-3.2-3b-preview':                         'llama3.2:3b',
-    'meta-llama/llama-4-scout-17b-16e-instruct':    'llama3.1:8b',
-    'qwen/qwen3-32b':                               'qwen2.5:32b',
-    'openai/gpt-oss-120b':                          'llama3.1:70b',
-    'openai/gpt-oss-20b':                           'qwen2.5:7b',
-    'moonshotai/kimi-k2-instruct':                  'qwen2.5:7b',
-    'mixtral-8x7b-32768':                           'mistral:7b',
-    'groq/compound':                                'llama3.2:3b',
-};
-
+// Only auto permits choosing a default. Explicit IDs must never be silently
+// mapped to another model family, including old provider-style names.
 function toOllamaModel(model: string): string {
-    if (MODEL_MAP[model]) return MODEL_MAP[model];
-    if (model.includes(':')) return model; // already Ollama format
-    // Unknown legacy ID: fall back to default
-    return DEFAULT_MODEL;
+    return model === 'auto' ? DEFAULT_MODEL : model;
+}
+
+// Ollama expands an untagged model ID to :latest in its response.
+function canonicalModel(model: string): string {
+    return model.split('/').pop()!.includes(':') ? model : `${model}:latest`;
 }
 
 const DEEP_THINK = (specialty: string) => `You are a world-class expert in ${specialty} with decades of experience. Precision is paramount.
@@ -172,7 +156,7 @@ export class NeuralRouter {
     async route(requestedModel: string, messages: ChatMessage[], telegramId?: number, options: InferenceOptions = {}): Promise<RouteResult> {
         if(isCloudModel(requestedModel))throw Error('cloud_models_disabled');
         const result = await this.routeInternal(requestedModel, messages, telegramId, options);
-        if (requestedModel !== 'auto' && result.model !== toOllamaModel(requestedModel)) {
+        if (requestedModel !== 'auto' && canonicalModel(result.model) !== canonicalModel(requestedModel)) {
             throw Object.assign(new Error('requested_model_unavailable'), { status: 503 });
         }
         return result;

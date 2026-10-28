@@ -1,11 +1,14 @@
 #!/bin/bash
 # Cloudflare Tunnel for gstdbot — replaces localhost.run
 # Publishes the node's temporary Cloudflare Tunnel URL for peer discovery.
-# Writes current URL to /tmp/gstd_tunnel_url.txt on each connect.
+# Stores the URL outside /tmp so systemd PrivateTmp services can read it.
 
-URL_FILE="/tmp/gstd_tunnel_url.txt"
-LOG="/home/bot/gstdbot/logs/tunnel.log"
-CF_BIN="$(dirname "$0")/cloudflared"
+INSTALL_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+CONFIG_DIR="${GSTD_CONFIG_DIR:-$HOME/.config/gstdbot}"
+mkdir -p "$CONFIG_DIR" "$INSTALL_DIR/logs"
+URL_FILE="${GSTD_TUNNEL_URL_FILE:-$CONFIG_DIR/tunnel-url.txt}"
+LOG="$INSTALL_DIR/logs/tunnel.log"
+CF_BIN="$INSTALL_DIR/cloudflared"
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
@@ -21,7 +24,7 @@ if [ ! -f "$CF_BIN" ]; then
     chmod +x "$CF_BIN"
 fi
 
-GSTDAI_DIR="/home/bot/gstdai"
+GSTDAI_DIR="${GSTD_PLATFORM_SOURCE_DIR:-$HOME/gstdai}"
 
 update_github_node_url() {
   local url="$1"
@@ -80,7 +83,7 @@ while true; do
     log "Tunnel active: $TUNNEL_URL"
     echo "$TUNNEL_URL" > "$URL_FILE"
     update_github_node_url "$TUNNEL_URL"
-    ENV_FILE="/home/bot/gstdbot/.env"
+    ENV_FILE="$INSTALL_DIR/.env"
     # Update GSTD_PUBLIC_URL (used by P2P heartbeat)
     if grep -q "^GSTD_PUBLIC_URL=" "$ENV_FILE" 2>/dev/null; then
       sed -i "s|^GSTD_PUBLIC_URL=.*|GSTD_PUBLIC_URL=$TUNNEL_URL|" "$ENV_FILE"
@@ -90,9 +93,9 @@ while true; do
     log "Updated GSTD_PUBLIC_URL=$TUNNEL_URL in .env"
     # Update GitHub gstdai seed file so other nodes bootstrapping can find this Pi
     if [ "${GSTD_PUBLISH_TUNNEL_TO_GITHUB:-false}" = "true" ]; then
-    SEED_FILE="/home/bot/gstdai/gstd-seed-peers.txt"
+    SEED_FILE="$GSTDAI_DIR/gstd-seed-peers.txt"
     echo "$TUNNEL_URL" > "$SEED_FILE"
-    (cd /home/bot/gstdai && git add gstd-seed-peers.txt && \
+    (cd "$GSTDAI_DIR" && git add gstd-seed-peers.txt && \
       git -c user.email="bot@gstdtoken.com" -c user.name="GSTD Pi Node" \
         commit -m "Update seed peer URL: $TUNNEL_URL" --no-gpg-sign && \
       git push origin main 2>&1 | tail -2) 2>/dev/null || true

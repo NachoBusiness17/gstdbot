@@ -1,7 +1,7 @@
 /** Minimal exposed surface. Everything else requires an operator session.
  * Archived finance/host-control modules cannot be re-enabled by an environment flag. */
 export function nodeSurface(path: string): 'public'|'operator'|'retired' {
-    const retired=['/api/node/bind-wallet','/api/node/unbind-wallet','/api/fees','/api/node/rewards','/api/wallet','/api/system','/api/bridge','/api/apps','/apps','/api/telegram','/api/training','/api/validator',
+    const retired=['/api/update/component','/api/node/bind-wallet','/api/node/unbind-wallet','/api/fees','/api/node/rewards','/api/wallet','/api/system','/api/bridge','/api/apps','/apps','/api/telegram','/api/training','/api/validator',
         '/api/validators','/api/vaults','/api/oracle','/api/enterprise','/api/defi','/api/naas',
         '/api/system/reinstall','/api/system/reset','/api/system/update-os','/api/system/ssh',
         '/api/ssl/setup','/api/dns/setup','/api/storage','/api/relay','/api/tasks','/api/rewards/claim'];

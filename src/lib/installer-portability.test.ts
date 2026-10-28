@@ -64,3 +64,14 @@ it.skipIf(process.platform==='win32')('finishes successfully without a separate 
  const out=execFileSync('bash',['-euo','pipefail','-c','pm2(){ return 1; };\n'+section+'\nprintf "finished"'],{encoding:'utf8'});
  expect(out).toBe('finished');
 });
+
+it.skipIf(process.platform==='win32')('tunnel paths work outside the original production account',()=>{
+ const source=readFileSync('tunnel.sh','utf8').split('while true; do')[0];
+ const dir=mkdtempSync(join(tmpdir(),'gstd-tunnel-install-'));
+ writeFileSync(join(dir,'cloudflared'),'fixture');
+ const home=join(dir,'different home');
+ const output=execFileSync('bash',['-eu','-c',source+'\nprintf "%s\\n" "$URL_FILE" "$LOG" "$CF_BIN"',join(dir,'tunnel.sh')],{
+  encoding:'utf8',env:{...process.env,HOME:home,GSTD_CONFIG_DIR:'',GSTD_TUNNEL_URL_FILE:''},
+ });
+ expect(output.trim().split('\n')).toEqual([join(home,'.config/gstdbot/tunnel-url.txt'),join(dir,'logs/tunnel.log'),join(dir,'cloudflared')]);
+});

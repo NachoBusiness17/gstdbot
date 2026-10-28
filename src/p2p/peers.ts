@@ -1,3 +1,4 @@
+import { readTunnelUrl } from '../lib/tunnel-url.js';
 /**
  * GSTD HTTP Peer Manager
  *
@@ -17,6 +18,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import { safeFetch } from '../lib/safe-fetch.js';
 
@@ -35,8 +37,7 @@ const HEARTBEAT_INTERVAL = 30_000;    // broadcast to all peers every 30s
 // require this node to have actually pinged the peer and gotten a response
 // before it's eligible to receive inference traffic -- see getBestPeer().
 const UNVERIFIED_LATENCY_MS = 9999;
-const PEERS_FILE   = join(process.env.GSTD_CONFIG_DIR || '/home/bot/.config/gstdbot', 'peers.json');
-const TUNNEL_URL_FILE = '/tmp/gstd_tunnel_url.txt';
+const PEERS_FILE   = join(process.env.GSTD_CONFIG_DIR || join(homedir(), '.config/gstdbot'), 'peers.json');
 
 /** Peer URLs arrive from other peers: accept only credential-free http(s) origins and drop paths/queries. */
 export function normalizePeerUrl(raw: unknown): string | null {
@@ -56,7 +57,7 @@ export function normalizePeerUrl(raw: unknown): string | null {
 export function resolvePublicUrl(configured: string): string {
     // Prefer tunnel file (updated live by tunnel.sh) over static config
     try {
-        const fromFile = readFileSync(TUNNEL_URL_FILE, 'utf-8').trim();
+        const fromFile = readTunnelUrl();
         if (fromFile.startsWith('http')) return fromFile;
     } catch { /* file may not exist yet */ }
     return configured;

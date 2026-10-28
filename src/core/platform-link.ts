@@ -1,3 +1,4 @@
+import { readTunnelUrl } from '../lib/tunnel-url.js';
 import {isCloudModel,localModelOptions} from '../lib/local-model-options.js';
 import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
 /**
@@ -15,7 +16,6 @@ import {withComputeSlot,computeCapacityAvailable} from '../security/compute.js';
 
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
 import { cpus, totalmem } from 'os';
 import { verifyPlatformCommand, isStaleCommand, type PlatformCommand } from '../lib/platform-auth.js';
 import { loadOrCreateAttestorIdentity, signPeerRequest, signWithIdentity, type AttestorIdentity } from '../p2p/identity.js';
@@ -147,7 +147,7 @@ export class PlatformLink extends EventEmitter {
     }
 
     private readTunnelUrl(): string {
-        try { return readFileSync('/tmp/gstd_tunnel_url.txt', 'utf8').trim(); } catch { return ''; }
+        return readTunnelUrl();
     }
 
     async syncRegistration(): Promise<boolean> {
@@ -237,9 +237,7 @@ export class PlatformLink extends EventEmitter {
         const models: string[] = (caps as any).models || [];
 
         // Read tunnel URL for locality-aware routing
-        const tunnelUrl = (() => {
-            try { return readFileSync('/tmp/gstd_tunnel_url.txt', 'utf8').trim(); } catch { return ''; }
-        })() || process.env.GSTD_PUBLIC_URL || '';
+        const tunnelUrl = this.readTunnelUrl() || process.env.GSTD_PUBLIC_URL || '';
 
         try {
             const resp = await fetch(`${this.platformUrl}/api/v1/nodes/heartbeat`, {

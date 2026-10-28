@@ -1,3 +1,4 @@
+import { readTunnelUrl } from '../lib/tunnel-url.js';
 /**
  * GSTD Node OS — Swarm Agent
  * 
@@ -391,9 +392,7 @@ export class SwarmAgent {
                 avg_latency_ms:  this.avgLatencyMs || undefined,
             };
             // Include node_url (Cloudflare tunnel) for locality-aware routing
-            const tunnelUrl = (() => {
-                try { return readFileSync('/tmp/gstd_tunnel_url.txt', 'utf8').trim(); } catch { return ''; }
-            })() || process.env.GSTD_PUBLIC_URL || '';
+            const tunnelUrl = readTunnelUrl() || process.env.GSTD_PUBLIC_URL || '';
             if (tunnelUrl) {
                 payload.node_url  = tunnelUrl;
                 // models_loaded: currently available Ollama models for locality scoring

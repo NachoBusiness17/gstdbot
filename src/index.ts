@@ -45,6 +45,7 @@ if (typeof (Promise as any).withResolvers !== 'function') {
 import { OmegaGateway, logActivity } from './gateway/server.js';
 import { fastForwardNodeUpdate, rollbackNodeUpdate } from './lib/node-update.js';
 import { DEFAULT_GSTD_API_URL, normalizeGstdApiUrl } from './core/api-url.js';
+import { readSavedNodeConfig } from './lib/saved-node-config.js';
 import { isRegistered, getEntry, modelFitsInRam } from './lib/model-registry.js';
 import { detectOdysseus } from './odysseus/detector.js';
 import { SecurityHardening } from './security/hardening.js';
@@ -69,7 +70,6 @@ import { GstdP2PNode } from './p2p/node.js';
 import { loadOrCreateAttestorIdentity } from './p2p/identity.js';
 import { loadOrCreateP2PIdentity } from './p2p/p2p-identity.js';
 import { hostname } from 'os';
-import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
@@ -173,25 +173,23 @@ async function loadConfig(): Promise<NodeConfig> {
         },
     };
 
-    if (existsSync(configPath)) {
-        try {
-            const file = JSON.parse(readFileSync(configPath, 'utf-8'));
-            const configuredApiUrl = process.env.GSTD_API_URL || file.swarm?.apiUrl || defaults.swarm.apiUrl;
-            const apiUrl = normalizeGstdApiUrl(configuredApiUrl);
-            if (apiUrl !== configuredApiUrl) {
-                console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
-            }
-            const merged = {
-                ...defaults, ...file,
-                version: defaults.version,
-                swarm: { ...defaults.swarm, ...file.swarm, apiUrl },
-                dashboard: { ...defaults.dashboard, ...file.dashboard },
-                memory: { ...defaults.memory, ...file.memory, enabled:process.env.GSTD_MEMORY==='true' },
-                apps: { ...defaults.apps, enabled:false },
-                mobileNode: {enabled:false},
-            };
-            return merged;
-        } catch (_e) { }
+    const file = readSavedNodeConfig(configPath);
+    if (file) {
+        const configuredApiUrl = process.env.GSTD_API_URL || file.swarm?.apiUrl || defaults.swarm.apiUrl;
+        const apiUrl = normalizeGstdApiUrl(configuredApiUrl);
+        if (apiUrl !== configuredApiUrl) {
+            console.warn('[Config] Migrated the legacy platform API URL to app.gstdtoken.com');
+        }
+        const merged = {
+            ...defaults, ...file,
+            version: defaults.version,
+            swarm: { ...defaults.swarm, ...file.swarm, apiUrl },
+            dashboard: { ...defaults.dashboard, ...file.dashboard },
+            memory: { ...defaults.memory, ...file.memory, enabled:process.env.GSTD_MEMORY==='true' },
+            apps: { ...defaults.apps, enabled:false },
+            mobileNode: {enabled:false},
+        };
+        return merged;
     }
     const apiUrl = normalizeGstdApiUrl(defaults.swarm.apiUrl);
     if (apiUrl !== defaults.swarm.apiUrl) {
