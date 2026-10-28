@@ -162,7 +162,7 @@ describe('PlatformLink task delivery', () => {
                 },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
-                message: { content: 'hello back' },
+                model: 'llama3.2:1b', message: { content: 'hello back' },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
@@ -170,6 +170,8 @@ describe('PlatformLink task delivery', () => {
         await (pl as any).pollAndProcess();
 
         expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(pl.getStatus().worker).toMatchObject({ resultsSubmitted: 1, lastErrorPhase: null, busy: false });
+        expect(pl.getStatus().worker.lastResultSubmitted).not.toBeNull();
         const [pollUrl, pollOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
         expect(pollUrl).toBe('http://localhost:9999/api/v1/tasks/poll');
         expect(pollOptions.method).toBe('POST');
@@ -206,7 +208,7 @@ describe('PlatformLink task delivery', () => {
                 task: { task_id: 'task-2', payload: { prompt: 'hello' } },
             }), { status: 200 }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
-                message: { content: '' },
+                model: 'llama3.2:3b', message: { content: '' },
             }), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
 
@@ -325,5 +327,62 @@ describe('PlatformLink tunnel recovery', () => {
         url = 'https://after-stop.trycloudflare.com';
         await vi.advanceTimersByTimeAsync(120000);
         expect(heartbeat).toHaveBeenCalledTimes(1);
+    });
+});
+
+
+describe('PlatformLink exact-model worker results', () => {
+    it.each(['other:large', undefined])('does not submit a mismatched or unidentified model (%s)', async returnedModel => {
+        const pl = makePL(); (pl as any).registered = true;
+        const request = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ task: { task_id: 'fixture-exact', payload: { model: 'wanted:small', prompt: 'fixture' } } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ model: returnedModel, message: { content: 'not an accepted exact answer' } })));
+        vi.stubGlobal('fetch', request);
+        await (pl as any).pollAndProcess();
+        expect(request).toHaveBeenCalledTimes(2);
+        expect(pl.getStatus().worker).toMatchObject({ resultsSubmitted: 0, lastErrorPhase: 'inference' });
+        expect(pl.getStatus().worker.lastResultSubmitted).toBeNull();
+        expect(pl.getStatus().worker.lastPoll).not.toBeNull();
+    });
+    it('accepts the default latest tag for the same untagged model', async () => {
+        const pl = makePL(); (pl as any).registered = true;
+        const request = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ task: { task_id: 'fixture-latest', payload: { model: 'wanted', prompt: 'fixture' } } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ model: 'wanted:latest', message: { content: 'accepted exact answer' } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+        vi.stubGlobal('fetch', request);
+        await (pl as any).pollAndProcess();
+        expect(request).toHaveBeenCalledTimes(3);
+        expect(pl.getStatus().worker.resultsSubmitted).toBe(1);
+        expect(JSON.parse(String((request.mock.calls[2] as any)[1].body)).model).toBe('wanted:latest');
+    });
+});
+
+
+it('reports a missing public route honestly without exposing URL credentials', () => {
+    const pl = makePL(); vi.spyOn(pl as any, 'readTunnelUrl').mockReturnValue('');
+    vi.stubEnv('GSTD_PUBLIC_URL', 'https://operator:private@node.example');
+    expect(pl.getStatus().publicUrl).toBeNull();
+    vi.stubEnv('GSTD_PUBLIC_URL', 'https://localhost');
+    expect(pl.getStatus().publicUrl).toBeNull();
+    vi.stubEnv('GSTD_PUBLIC_URL', 'https://node.example/');
+    expect(pl.getStatus().publicUrl).toBe('https://node.example');
+});
+
+
+describe('PlatformLink configured task default', () => {
+    it.each(['auto', undefined])('resolves %s to the configured model and reports the concrete response model', async requestedModel => {
+        vi.stubEnv('GSTD_DEFAULT_MODEL', 'qwen2.5:0.5b');
+        const pl = makePL(); (pl as any).registered = true;
+        const request = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ task: { task_id: 'fixture-configured-default', payload: { model: requestedModel, prompt: 'fixture' } } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ model: 'qwen2.5:0.5b', message: { content: 'configured answer' } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+        vi.stubGlobal('fetch', request);
+        await (pl as any).pollAndProcess();
+        expect(request).toHaveBeenCalledTimes(3);
+        expect(JSON.parse(String((request.mock.calls[1] as any)[1].body)).model).toBe('qwen2.5:0.5b');
+        expect(JSON.parse(String((request.mock.calls[2] as any)[1].body))).toMatchObject({model:'qwen2.5:0.5b',result:'configured answer'});
+        expect(pl.getStatus().worker.resultsSubmitted).toBe(1);
     });
 });

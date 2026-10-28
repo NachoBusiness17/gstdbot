@@ -73,6 +73,10 @@ export class PlatformLink extends EventEmitter {
     private nodePubkey: string = '';
     private identity: AttestorIdentity | null = null;
     private lastTaskErrorLog = 0;
+    private lastTaskPoll: Date | null = null;
+    private lastTaskCompletion: Date | null = null;
+    private taskResultsSubmitted = 0;
+    private lastTaskErrorPhase: string | null = null;
 
     constructor(config: { platformUrl: string; nodeId: string; walletAddress: string; version: string }) {
         super();
@@ -424,6 +428,8 @@ export class PlatformLink extends EventEmitter {
                 throw new Error(`Task poll failed: HTTP ${resp.status}`);
             }
             const data: any = await resp.json();
+            this.lastTaskPoll = new Date();
+            this.lastTaskErrorPhase = null;
             this.taskPollFailures = 0;
             this.nextTaskPollMs = this.idlePollMs;
             if (!data.task?.task_id) return;
@@ -432,7 +438,11 @@ export class PlatformLink extends EventEmitter {
             const task = data.task;
             const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
             const task_id: string = task.task_id;
-            const model: string = payload.model || task.model || 'llama3.2:3b';
+            const requestedModel = payload.model ?? task.model;
+            // Only an absent model or explicit auto opts into this node's configured default.
+            const model = requestedModel == null || requestedModel === 'auto'
+                ? (process.env.GSTD_DEFAULT_MODEL || 'llama3.2:3b') : requestedModel;
+            if (typeof model !== 'string' || !model.trim() || model === 'auto') throw new Error('invalid_task_model');
             if(isCloudModel(model))throw Error('cloud_models_disabled');
             const prompt: unknown = payload.prompt ?? task.prompt ?? '';
             const taskMessages: unknown = payload.messages ?? task.messages;
@@ -471,6 +481,12 @@ export class PlatformLink extends EventEmitter {
             if (!aiResp.ok) throw new Error(`Local inference failed: HTTP ${aiResp.status}`);
             return await aiResp.json();
             });
+            // The worker queue must enforce the same exact-model contract as chat.
+            const canonical = (id: string) => id.split('/').pop()!.includes(':') ? id : id + ':latest';
+            if (typeof aiData?.model !== 'string' || canonical(aiData.model) !== canonical(model)) {
+                throw new Error('requested_model_unavailable');
+            }
+            const actualModel: string = aiData.model;
             const content = aiData?.message?.content;
             if (typeof content !== 'string' || !content.trim()) {
                 throw new Error('Local inference returned an empty response');
@@ -484,14 +500,18 @@ export class PlatformLink extends EventEmitter {
                     'X-Wallet-Address': this.walletAddress,
                     ...this.authHeaders(),
                 },
-                body: JSON.stringify({ task_id, node_id: this.nodeId, result: content, model, latency_ms: Math.max(0, Date.now() - inferenceStarted) }),
+                body: JSON.stringify({ task_id, node_id: this.nodeId, result: content, model: actualModel, latency_ms: Math.max(0, Date.now() - inferenceStarted) }),
                 signal: AbortSignal.timeout(25000),
             });
             if (!completion.ok) throw new Error(`Task completion failed: HTTP ${completion.status}`);
 
-            console.log(`  ✅ Task ${task_id} completed (${model}, ${content.length} chars)`);
-            this.emit('task:completed', { task_id, model });
+            this.lastTaskCompletion = new Date();
+            this.taskResultsSubmitted++;
+            console.log(`  ✅ Task ${task_id} completed (${actualModel}, ${content.length} chars)`);
+            this.emit('task:completed', { task_id, model: actualModel });
         } catch (err: any) {
+            // Expose only the phase, never a prompt or upstream response body.
+            this.lastTaskErrorPhase = phase;
             if (Date.now() - this.lastTaskErrorLog > 60_000) {
                 this.lastTaskErrorLog = Date.now();
                 console.warn(`[PlatformLink] Task poll or execution failed: ${err.message}`);
@@ -515,6 +535,14 @@ export class PlatformLink extends EventEmitter {
     }
 
     getStatus() {
+        let publicUrl: string | null = null;
+        try {
+            const url = new URL(this.readTunnelUrl() || process.env.GSTD_PUBLIC_URL || '');
+            const host = url.hostname.toLowerCase();
+            if (url.protocol === 'https:' && !url.username && !url.password && !url.port
+                && host !== 'localhost' && !host.endsWith('.localhost') && !host.endsWith('.local')
+                && !host.endsWith('.internal') && !host.includes(':') && !/^\d+(?:\.\d+){3}$/.test(host)) publicUrl = url.origin;
+        } catch { /* No usable public route is configured. Never expose URL credentials. */ }
         return {
             registered: this.registered,
             walletAddress: this.walletAddress,
@@ -522,6 +550,16 @@ export class PlatformLink extends EventEmitter {
             failCount: this.failCount,
             platformUrl: this.platformUrl,
             nodeId: this.nodeId,
+            publicUrl,
+            worker: {
+                enabled: this.taskLoopEnabled,
+                busy: this.tasksBusy,
+                lastPoll: this.lastTaskPoll?.toISOString() || null,
+                lastResultSubmitted: this.lastTaskCompletion?.toISOString() || null,
+                resultsSubmitted: this.taskResultsSubmitted,
+                lastErrorPhase: this.lastTaskErrorPhase,
+                retryAt: this.taskBackoffUntil > Date.now() ? new Date(this.taskBackoffUntil).toISOString() : null,
+            },
         };
     }
 

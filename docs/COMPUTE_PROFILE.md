@@ -5,7 +5,7 @@ A node is an AI compute worker, not a financial custodian or a general-purpose r
 ## Supported
 - Local Ollama inference and an OpenAI-compatible HTTP endpoint.
 - Signed node identity, registration, bounded task polling, result delivery and platform-confirmed earnings.
-- P2P discovery and the existing verified-task core. Its offline/quorum tests are software simulations; they are not evidence of a multi-host production network or real GSTD settlement.
+- The active production consumer is the signed PlatformLink inference worker. The P2P discovery and verified-task research core is retained; its offline/quorum tests are simulations, not evidence of a multi-host production network or real GSTD settlement.
 - Operator-authenticated diagnostics, model management and code update with rollback.
 - An external, watch-only payout address. New nodes do not create a token spending seed.
 
@@ -15,7 +15,7 @@ The compute runtime does not start experimental training, arbitrary container co
 Non-core APIs require a dashboard operator session, including usage records and events. Being behind a localhost tunnel does not authenticate a caller. WebSockets require operator authentication and have connection/payload bounds. This release limits JSON bodies to 512 KiB. Source tests cover denied routes and private routing.
 
 ## Privacy
-Direct node requests default to local inference. If it cannot answer, it does not upload the prompt. Explicit privacy: network permits forwarding to the task network/peers. Cross-request response caching is off unless explicitly enabled by an internal caller. Collective memory is off by default; public knowledge publication additionally requires GSTD_SHARE_KNOWLEDGE=true. Do not use this flag for private user conversations.
+Direct node requests default to local inference. If it cannot answer, it does not upload the prompt. Explicit privacy: network permits forwarding through the configured task-network path. Direct peer routing remains experimental; peer HTTP management is operator-gated and must not be opened without a peer-authentication design. Cross-request response caching is off unless explicitly enabled by an internal caller. Collective memory is off by default; public knowledge publication additionally requires GSTD_SHARE_KNOWLEDGE=true. Do not use this flag for private user conversations.
 
 A selected executor necessarily processes the plaintext question. We do not claim encrypted computation, a trusted execution environment, or immunity to a malicious operator. Platform payments retain response text for at most ten minutes for retry; the owner can delete it sooner. Financial receipts retain hashes and amounts.
 
@@ -25,17 +25,17 @@ Only the platform's funded, accepted work creates GSTD claims. Local fee estimat
 No hourly reward, uptime multiplier, staking APY or guaranteed profitability is offered. Operators must account for hardware, electricity, bandwidth, token liquidity and demand. The current production setup has one physical node and centralized platform/custody dependencies; it is not unstoppable or fully decentralized. See CENTRAL_DEPENDENCIES.md.
 
 ## Installation and control
-Use the canonical install.sh from this repository. Configure GSTD_WALLET_ADDRESS with an external wallet you control, then log in to the node's PIN-protected dashboard. Keep signing keys off the node. Existing wallet files are preserved, never automatically wiped.
+Use the canonical install.sh from this repository, then link your own public TON wallet in the PIN-protected operator dashboard. Advanced installs may set GSTD_WALLET_ADDRESS for the initial watch-only address. Keep token-spending and treasury keys off the node; protected node identity keys sign protocol requests. Existing wallet files are preserved, never automatically wiped.
 
 Code pushes run CI only. Container publication requires an explicit workflow dispatch. Update a production node only after CI passes; rollback remains available.
 
 Automatic source updates are off by default; GSTD_AUTO_UPDATE=true is an explicit operator opt-in. The HTTP inference path permits one active request by default (configurable up to four). Operator PINs use salted scrypt; a successful legacy login migrates its digest without changing the PIN.
 
-## 3.6.1 operational checks
+## 3.7 operational checks
 
-The CLI exposes only `gateway`/`serve`, `status`, `doctor`, `send` and `chat`. It defaults to localhost and local inference, executes no model-selected host tools and persists no chat history. `--network` is explicit.
+The CLI defaults to localhost and local inference, executes no model-selected host tools and persists no chat history. `--network` is explicit. Use `gstd-node --help` to inspect the installed version’s diagnostic and lifecycle commands.
 
-Fresh script installs save the first-setup token in `~/.config/gstdbot/setup-token` with mode 0600; the token is never printed in install logs. Existing PINs and node keys are preserved. Container operators must supply their setup token explicitly.
+Fresh script installs save the first-setup token in `~/.config/gstdbot/setup-token` with mode 0600; the token is never printed in install logs. Existing PINs and node keys are preserved. Containers store first-setup data in their configured persistent data directory; use the operator guide to retrieve the local setup token or explicitly provide one securely.
 
 HTTP inference and assigned work share one process-wide compute limit. A busy OpenAI-compatible endpoint returns 429 with Retry-After. A busy node does not poll for another assignment.
 
@@ -43,4 +43,10 @@ Local blockchain/staking and synthetic RevenueEngine startup are disabled; payme
 
 `npm run eval:quality` runs four strict deterministic samples for each installed model, through the local gateway. Set GSTD_EVAL_URL for a different local port and GSTD_EVAL_OUTPUT for a report path. This is a smoke test, not proof of general answer quality. Both malformed structured output and timeouts fail the check.
 
-The old SwarmAgent assignment consumer is not started: it advertised retired storage/verification work and could upload peer responses to the central platform. The active compute consumer is the signed PlatformLink inference worker. libp2p transport/discovery remains research infrastructure; it is not evidence of independently verified peer execution or decentralized settlement. Public node-to-node HTTP routing and platform-free demo routing are separate paths.
+The old SwarmAgent assignment consumer is not started: it advertised retired storage/verification work and could upload peer responses to the central platform. The active compute consumer is the signed PlatformLink inference worker. libp2p transport/discovery remains research infrastructure; it is not evidence of independently verified peer execution or decentralized settlement. Operator-gated peer HTTP endpoints are not a working authenticated direct-gossip network. Do not remove their authentication to make discovery appear functional.
+
+### Work availability
+
+Funded campaign tasks use outbound signed polling and do not require a public port. Direct platform chat calls an executor HTTPS endpoint and therefore needs a reachable protected public route. Registration alone is not proof that direct chat can reach a node.
+
+The dashboard separates these paths and reuses local PlatformLink status: successful poll time, submitted results and error phase. Submitted results are not a balance or proof of a captured funded reward, and direct chat requests are not counted as background queue results. Online presence alone earns nothing. No additional external polling is added by the readiness UI.

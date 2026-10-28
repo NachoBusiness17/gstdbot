@@ -6,7 +6,7 @@
 
 ### Выбор и установка модели
 
-1. Откройте «Локальные модели» → «Выберите модель из интернета».
+1. Откройте «Каталог моделей» → «Выберите модель из интернета».
 2. В списке доступны проверенные локальные варианты Qwen 3.5, Gemma 4, Qwen 3 Coder, GPT OSS и небольшие модели предыдущего поколения для слабых машин.
 3. Для выбранной модели показаны размер загрузки, оценка RAM и совместимость: подходит по ресурсам, нужно освободить RAM, недостаточно RAM/диска либо ресурсы удалённого Ollama неизвестны.
 4. Нажмите «Скачать модель» и дождитесь прогресса. После загрузки модель появляется в списке чата.
@@ -56,7 +56,7 @@ bash scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --
 bash scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS
 ```
 
-SSH-доступ и записи known_hosts должны быть настроены заранее. Ключи нод создаются отдельно на каждой машине и не копируются. Существующие адреса/балансы не перезаписываются. Текущий лимит платформы — 10 живых идентичностей на один регистрационный кошелёк. Каждая машина — отдельная нода; это распределение запросов, а не объединение RAM/GPU для одной большой модели. Для публичного платного инференса каждой ноде нужен доступный HTTPS endpoint; пакетный установщик не создаёт туннели автоматически. Живого кластера для end-to-end проверки сейчас нет.
+SSH-доступ и записи known_hosts должны быть настроены заранее. Ключи нод создаются отдельно на каждой машине и не копируются. Существующие адреса/балансы не перезаписываются. Текущий лимит платформы — 10 живых идентичностей на один регистрационный кошелёк. Каждая машина — отдельная нода; это распределение запросов, а не объединение RAM/GPU для одной большой модели. Для прямого платного чата платформы каждой ноде нужен доступный защищённый HTTPS endpoint; пакетный установщик не создаёт туннели автоматически. Исходящая очередь заданий оплаченных кампаний не требует публичного порта. Живого кластера для end-to-end проверки сейчас нет.
 
 ## English
 
@@ -68,7 +68,7 @@ Open the dashboard printed by the installer (normally port 8080; this machine us
 - **Load:** CPU, RAM, slots, request count, uptime and heartbeat are local measurements. Visible-tab refresh does not poll Cloudflare.
 - **Updates:** manual Git source updates require npm, a successful build and PM2/systemd. Docker uses an image rebuild.
 - **Hardware:** Linux x86-64/ARM64 and WSL2 are primary targets. Use `bash install.sh --check` before installation. Native Windows and 32-bit ARM are unsupported by this Bash installer; macOS is best-effort. Model runtime and GPU drivers need validation.
-- **Multiple Linux machines:** use `scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --plan` to validate an inventory before installation. SSH and known_hosts must already be configured. Each host gets an independent identity. The current platform cap is 10 live identities per registration wallet. Public paid inference requires a reachable HTTPS endpoint per node; automatic tunnels and tensor-parallel multi-host execution are not provided. No physical cluster was available for an end-to-end deployment test.
+- **Multiple Linux machines:** use `scripts/install-cluster.sh --hosts hosts.txt --wallet PUBLIC_TON_ADDRESS --plan` to validate an inventory before installation. SSH and known_hosts must already be configured. Each host gets an independent identity. The current platform cap is 10 live identities per registration wallet. Direct platform paid chat requires a reachable protected HTTPS endpoint per node; funded campaign tasks can be pulled over an outbound connection without a public port. Automatic tunnels and tensor-parallel multi-host execution are not provided. No physical cluster was available for an end-to-end deployment test.
 
 ## Local and network model directory
 
@@ -92,3 +92,33 @@ Use the root `install.sh` as the canonical entry point; `scripts/install.sh` del
 The installer uses Node.js for configuration, includes build dependencies even when `NODE_ENV=production`, preserves existing configuration fields and refuses malformed JSON. Systemd is selected only when its manager is present; otherwise PM2 is installed in the current user's `~/.local` prefix. Reboot startup still depends on the operating system's init/user-session setup. Prefer a dedicated unprivileged operator account for a real compute node.
 
 CI's fresh-source-installer check clones the exact public GitHub commit in a disposable Linux x86-64 container, builds and starts it, then checks first operator access and the packaged catalogue. It uses an Ollama fixture and downloads no real models: it does not certify GPU drivers, inference compatibility or every operating system/architecture. A separate offline container check covers packaged runtime startup without network access.
+
+## Готовность и два пути работы / Readiness and two work paths
+
+В блоке **«Готовность фоновой работы»** видны среда Ollama, установленные модели, регистрация, получатель новых наград, последняя успешная проверка очереди и свободный вычислительный слот. Если адрес ещё не задан, сначала привяжите собственный публичный TON-кошелёк: без него регистрация новой ноды не завершится. Проверки используют уже полученные данные и не добавляют запросов к Cloudflare.
+
+- **Исходящая очередь:** подписанная нода забирает задания из профинансированных кампаний. Для этого публичный IP/туннель не обязателен. Свежая успешная проверка очереди подтверждает связь, но не наличие оплаченного заказа.
+- **Прямой чат:** платформа обращается к HTTPS-адресу исполнителя. Указанный адрес не доказывает внешнюю доступность: проверьте ноду в реестре и настройте защищённый маршрут по своей сетевой схеме. Не открывайте Ollama напрямую в интернет.
+
+Счётчик отправленных результатов относится только к фоновой очереди после запуска. Он не включает прямые запросы чата и не является балансом, доказательством принятия или начисления. Оплаченную принятую работу и награды проверяйте в [«Баланс и награды»](https://app.gstdtoken.com/ru/payments?from=node). Реальный вывод в TON подписывает владелец кошелька обеспечения; личная авторизация получателя сама по себе не исполняет перевод.
+
+The **Background work readiness** section shows Ollama, installed models, registration, reward recipient, the last successful task poll and compute capacity. A new node needs its public payout address before registration can finish. These checks reuse data already fetched and add no Cloudflare requests.
+
+- **Outbound queue:** signed nodes pull tasks from funded campaigns without a public port. A successful poll confirms connectivity, not paid demand.
+- **Direct chat:** the platform calls the executor’s HTTPS endpoint. A configured address does not prove external reachability; check the registry. Never expose Ollama directly.
+
+Submitted-result counters cover only this process’s background queue. They exclude direct chat requests and do not prove acceptance, paid work or a money balance. Check accepted paid work and rewards on the platform. On-chain payouts require the custody owner’s signature; recipient wallet authentication alone does not execute a transfer.
+
+## Восстановление вручную / Manual recovery gate
+
+Это инструкция владельцу, а не подтверждение выполненного восстановления production.
+
+1. Остановите **только свою ноду** через используемый менеджер (PM2, systemd либо Docker). Не запускайте старую и восстановленную копии одной идентичности одновременно.
+2. Сохраните целиком `~/.config/gstdbot/` пользователя, от которого работает нода. Критичные файлы: `config.json`, `attestor-identity.json`, `p2p-identity.json`, `wallet.json`, `dashboard_pin.hash` и `setup-token` (если он ещё используется). Не открывайте и не выводите их содержимое в журналы или чат.
+3. Если заданы отдельные `GSTD_CONFIG_DIR` или `GSTD_IDENTITY_DIR`, сохраните и эти каталоги. Сохраните конфигурацию запуска и `.env` из каталога установки; если владелец отдельно использует `node.env` в своей службе, сохраните именно тот файл. Канонический установщик не создаёт отдельный `node.env`.
+4. Для Docker сохраните весь том, смонтированный в `/data/gstdbot`, включая вложенные каталоги. В контейнере настройки доступа используют `GSTD_CONFIG_DIR`, а остальные данные могут находиться под `$HOME/.config/gstdbot`; копирование всего тома сохраняет оба пути.
+5. Держите копию вне машины в зашифрованном хранилище под контролем владельца. Каталоги с ключами — доступ только владельцу (0700), файлы ключей/PIN/токенов — 0600. Не помещайте копию в GitHub, общий чат или публичный каталог сайта. Проверьте, что архив читается, не публикуя его содержимое.
+6. На остановленной целевой ноде восстановите каталог(и) и конфигурацию запуска **до первого запуска**, с правильным владельцем и правами. Не удаляйте повреждённые файлы, чтобы получить новую идентичность: восстановите их из проверенной копии. Сохраните исходную копию отдельно до проверки.
+7. Запустите одну копию, проверьте прежний ID ноды, личный адрес новых наград, регистрацию, успешный poll и локальный тест модели. Временный адрес туннеля может смениться; прежний URL не считается доказательством доступности. Подтвердите новый маршрут в реестре.
+
+Owner checklist: stop the existing node; keep an encrypted offline copy of its whole configuration/data directories, persistent identity keys, watch-only wallet, PIN digest and launch environment. Restore ownership and permissions before starting the replacement, and never run two copies of one identity simultaneously. A corrupt identity must be restored, not regenerated. Verify the previous node ID, payout recipient, signed registration, successful polling and inference afterward. No production restore rehearsal has been completed by writing this guide.
